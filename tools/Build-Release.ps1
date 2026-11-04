@@ -25,7 +25,7 @@ foreach ($item in 'VERSION', 'IPA_Dredd.ps1', 'Start_IPA_Dredd_Windows.bat', 'RE
     Copy-Item -LiteralPath (Join-Path $appRoot $item) -Destination $stage -Recurse
 }
 Copy-Item -LiteralPath (Join-Path $appRoot 'Files/AppsList.txt') -Destination (Join-Path $stage 'Files')
-New-Item -ItemType File -Path (Join-Path $stage 'Files/AppsListCustom.txt') | Out-Null
+# AppsListCustom.txt не кладём: при копировании новой версии поверх старой он затёр бы «Мой список» (программа создаёт файл сама).
 
 # Запускатор с иконкой — собирается заново под эту версию:
 & (Join-Path $PSScriptRoot 'Build-Launcher.ps1') -OutDir $stage | Out-Null

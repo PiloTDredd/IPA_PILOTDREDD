@@ -554,5 +554,6 @@
   "Setup.Install": "Download components",
   "Setup.Installing": "Downloading components…",
   "Setup.Done": "Components installed",
-  "Setup.DoneText": "You can sign in to your Apple ID now."
+  "Setup.DoneText": "You can sign in to your Apple ID now.",
+  "Err.DeviceGone": "The device disconnected or is not responding. Unlock the iPhone/iPad, plug the cable directly into the computer (no hub or adapter), close Apple Devices/iTunes, press Scan on the Devices page and try again"
 }

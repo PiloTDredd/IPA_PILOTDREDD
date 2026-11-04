@@ -1,10 +1,5 @@
 ﻿# Поиск ipatool и инструментов libimobiledevice (ADR-004).
 
-$script:WindowsRequiredDlls = @(
-    'libbz2-1.dll', 'libcrypto-3-x64.dll', 'libimobiledevice-1.0.dll', 'libimobiledevice-glue-1.0.dll',
-    'liblzma-5.dll', 'libplist-2.0.dll', 'libssl-3-x64.dll', 'libusbmuxd-2.0.dll', 'libzip.dll', 'libzstd.dll', 'zlib1.dll'
-)
-
 function Get-DreddBinaryCandidates {
     param([Parameter(Mandatory)][string]$AppRoot, [string]$Configured)
     $parent = [System.IO.Path]::GetDirectoryName($AppRoot.TrimEnd('\', '/'))
@@ -75,8 +70,6 @@ function Find-DreddBinaries {
                 $result.IdeviceId = $id
                 $result.IdeviceInstaller = $inst
                 $result.IdeviceInfo = Find-DreddFileByPattern -Folder $folder -Pattern 'ideviceinfo*.exe'
-                $missing = @($script:WindowsRequiredDlls | Where-Object { -not [System.IO.File]::Exists((Join-Path $folder $_)) })
-                $result.MissingDlls = $missing
                 if ($folder -ne $result.Root) { $result.Notes += "device tools from $folder" }
                 break
             }

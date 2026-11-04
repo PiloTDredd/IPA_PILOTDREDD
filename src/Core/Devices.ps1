@@ -112,14 +112,33 @@ function Install-DreddIpa {
     }
     try {
         [System.IO.File]::Copy($IpaPath, $tmpIpa, $true)
-        $baseArgs = @()
-        if ($UDID) { $baseArgs = @('-u', $UDID) }
-        $r = Invoke-DreddProcess -FilePath $inst -ArgumentList ($baseArgs + @('install', $tmpIpa)) -TimeoutSec 900 -CancellationToken $CancellationToken -OnLine $onLine -Environment $env1
-        if ($r.Cancelled) { return [pscustomobject]@{ Ok = $false; ErrorKey = 'Err.Cancelled'; Message = ''; Output = $r.Output } }
-        if ($r.ExitCode -ne 0) {
-            Write-DreddReport -Reporter $Reporter -Type log -Level Info -Area 'Install' -Message 'install → upgrade'
-            $r = Invoke-DreddProcess -FilePath $inst -ArgumentList ($baseArgs + @('upgrade', $tmpIpa)) -TimeoutSec 900 -CancellationToken $CancellationToken -OnLine $onLine -Environment $env1
+        $r = $null
+        # Две попытки: iPad/iPhone мог на секунду пропасть из usbmuxd (блокировка, переподключение USB-C, хаб).
+        for ($attempt = 1; $attempt -le 2; $attempt++) {
+            $baseArgs = @()
+            if ($UDID) {
+                # Где устройство сейчас: по кабелю (-l) или по сети (-n). Ждём до ~10 с, пока оно появится.
+                $conn = Wait-DreddDeviceConnection -Context $Context -Udid $UDID -TimeoutSec 10 -CancellationToken $CancellationToken
+                if (-not $conn) {
+                    if ($null -ne $CancellationToken -and $CancellationToken.IsCancellationRequested) { return [pscustomobject]@{ Ok = $false; ErrorKey = 'Err.Cancelled'; Message = ''; Output = '' } }
+                    return [pscustomobject]@{ Ok = $false; ErrorKey = 'Err.DeviceGone'; Message = "No device found with udid $UDID"; Output = '' }
+                }
+                $baseArgs = @('-u', $UDID)
+                if ($conn -eq 'network') { $baseArgs += '-n'; Write-DreddReport -Reporter $Reporter -Type log -Level Info -Area 'Install' -Message 'Wi-Fi' }
+            }
+            $r = Invoke-DreddProcess -FilePath $inst -ArgumentList ($baseArgs + @('install', $tmpIpa)) -TimeoutSec 900 -CancellationToken $CancellationToken -OnLine $onLine -Environment $env1
             if ($r.Cancelled) { return [pscustomobject]@{ Ok = $false; ErrorKey = 'Err.Cancelled'; Message = ''; Output = $r.Output } }
+            if ($r.ExitCode -ne 0 -and $r.Output -notmatch '(?i)No device found') {
+                Write-DreddReport -Reporter $Reporter -Type log -Level Info -Area 'Install' -Message 'install → upgrade'
+                $r = Invoke-DreddProcess -FilePath $inst -ArgumentList ($baseArgs + @('upgrade', $tmpIpa)) -TimeoutSec 900 -CancellationToken $CancellationToken -OnLine $onLine -Environment $env1
+                if ($r.Cancelled) { return [pscustomobject]@{ Ok = $false; ErrorKey = 'Err.Cancelled'; Message = ''; Output = $r.Output } }
+            }
+            if ($attempt -eq 1 -and $r.Output -match '(?i)No device found') {
+                Write-DreddReport -Reporter $Reporter -Type log -Level Warning -Area 'Install' -Message 'device not found, retrying'
+                Start-Sleep -Seconds 3
+                continue
+            }
+            break
         }
         # Некоторые сборки ideviceinstaller возвращают 0 при ERROR в выводе — проверяем текст.
         $failedText = $r.Output -match '(?im)^\s*(ERROR|Error:)'
@@ -130,9 +149,35 @@ function Install-DreddIpa {
         $lastLine = @($msg -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -Last 1)
         $key = 'Err.InstallFailed'
         if ($msg -match '(?i)(pair|trust|lockdown)') { $key = 'Err.NotTrusted' }
-        elseif ($msg -match '(?i)(No device found|device not found)') { $key = 'Err.NoDevices' }
+        elseif ($msg -match '(?i)(No device found|device not found)') { $key = 'Err.DeviceGone' }
         return [pscustomobject]@{ Ok = $false; ErrorKey = $key; Message = ($lastLine -join ''); Output = $msg }
     } finally {
         try { if ([System.IO.Directory]::Exists($temp)) { [System.IO.Directory]::Delete($temp, $true) } } catch { }
     }
+}
+
+function Get-DreddDeviceConnection {
+    # 'usb' — устройство видно по кабелю, 'network' — по Wi-Fi (синхронизация по сети), $null — не видно.
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Udid, $CancellationToken)
+    $id = $Context.Binaries.IdeviceId
+    if (-not $id) { return 'usb' }   # без idevice_id проверить нельзя — пробуем как раньше
+    $env1 = Get-DreddDeviceToolEnv $Context
+    foreach ($mode in @(@('-l', 'usb'), @('-n', 'network'))) {
+        $r = Invoke-DreddProcess -FilePath $id -ArgumentList @($mode[0]) -TimeoutSec 15 -CancellationToken $CancellationToken -Environment $env1
+        $found = @($r.StdOut -split "`r?`n" | ForEach-Object { ($_.Trim() -split '\s+')[0] } | Where-Object { $_ -and $_.Equals($Udid, [StringComparison]::OrdinalIgnoreCase) })
+        if ($found.Count -gt 0) { return $mode[1] }
+    }
+    return $null
+}
+
+function Wait-DreddDeviceConnection {
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Udid, [int]$TimeoutSec = 10, $CancellationToken)
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    do {
+        $c = Get-DreddDeviceConnection -Context $Context -Udid $Udid -CancellationToken $CancellationToken
+        if ($c) { return $c }
+        if ($null -ne $CancellationToken -and $CancellationToken.IsCancellationRequested) { return $null }
+        Start-Sleep -Seconds 2
+    } while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec)
+    return $null
 }

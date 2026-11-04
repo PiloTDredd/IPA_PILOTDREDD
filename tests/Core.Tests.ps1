@@ -330,7 +330,8 @@ Test 'Find-DreddBinaries prefers settings, then app MainApp, then 4.2, then 4.1'
     $b = Find-DreddBinaries -AppRoot $app
     Assert-Equal 'v4.2' $b.RootSource
     Assert-True ([bool]$b.IdeviceId)
-    Assert-True (@($b.MissingDlls).Count -eq 11) 'DLLs should be reported as missing.'
+    # Набор DLL зависит от сборки инструментов — его проверяет пробный запуск в диагностике, а не список файлов.
+    Assert-Equal 0 @($b.MissingDlls).Count 'a fixed DLL list must not be reported as missing.'
     $own = Join-Path $app 'MainApp/windows_amd64'; [void][System.IO.Directory]::CreateDirectory($own)
     [System.IO.File]::WriteAllText((Join-Path $own 'ipatool-cpp-windows-amd64.exe'), '')
     $b2 = Find-DreddBinaries -AppRoot $app
@@ -651,6 +652,26 @@ Test 'First run without binaries: components installed from the release archive'
     }
     Assert-False ([System.IO.Directory]::Exists((Join-Path $ctx.AppRoot 'MainApp_previous'))) 'first setup must not create a backup.'
     Assert-Equal '9.9.9' (Get-DreddToolVersion $ctx)
+}
+
+Test 'Install: a device that briefly disappears is retried; a missing device gives a clear error' {
+    $ctx = New-TestContext
+    $ctx.Binaries.IdeviceId = Join-Path $fixtures 'fake-idevice_id.cmd'
+    $ctx.Binaries.IdeviceInstaller = Join-Path $fixtures 'fake-ideviceinstaller.cmd'
+    $ipa = Join-Path $ctx.AppRoot 'Test.ipa'; [System.IO.File]::WriteAllText($ipa, 'x')
+    $flag = Join-Path $TestRoot ('flaky_' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+    $env:FAKE_DEVICE_FLAKY = $flag
+    try {
+        $r = Install-DreddIpa -Context $ctx -IpaPath $ipa -UDID '00008110-000A1B2C3D4E5F60'
+        Assert-True $r.Ok "install after a brief disconnect failed: $($r.ErrorKey) $($r.Message)"
+    } finally { $env:FAKE_DEVICE_FLAKY = $null }
+    $env:FAKE_NO_DEVICE = '1'
+    try {
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $r2 = Install-DreddIpa -Context $ctx -IpaPath $ipa -UDID '00008110-000A1B2C3D4E5F60'
+        Assert-Equal 'Err.DeviceGone' $r2.ErrorKey
+        Assert-True ($sw.Elapsed.TotalSeconds -lt 30) 'waiting for a missing device took too long.'
+    } finally { $env:FAKE_NO_DEVICE = $null }
 }
 
 Test 'Queue state: saved per account, empty queue removes the file' {

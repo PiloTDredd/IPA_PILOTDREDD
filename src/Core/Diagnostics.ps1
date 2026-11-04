@@ -59,8 +59,13 @@ function Get-DreddDiagnostics {
     & $add 'IdeviceId' $(if ($b.IdeviceId) { 'OK' } else { 'Warning' }) $(if ($b.IdeviceId) { [System.IO.Path]::GetFileName($b.IdeviceId) } else { '' }) $(if ($p.IsWindows) { 'Diag.Hint.DeviceToolsWin' } elseif ($p.IsMac) { 'Diag.Hint.DeviceToolsMac' } else { 'Diag.Hint.DeviceToolsLinux' })
     & $add 'IdeviceInfo' $(if ($b.IdeviceInfo) { 'OK' } else { 'Warning' }) $(if ($b.IdeviceInfo) { [System.IO.Path]::GetFileName($b.IdeviceInfo) } else { '' }) 'Diag.Hint.IdeviceInfo'
     if ($p.IsWindows -and $b.IdeviceId) {
-        $missing = @($b.MissingDlls)
-        & $add 'Dlls' $(if ($missing.Count -eq 0) { 'OK' } else { 'Error' }) $(if ($missing.Count -eq 0) { '11/11' } else { $missing -join ', ' }) 'Diag.Hint.Dlls'
+        # Набор DLL зависит от сборки инструментов (в релизах IPA Downloader 4.3+ большая часть встроена в exe),
+        # поэтому проверяем не список файлов, а пробный запуск: без DLL Windows возвращает 0xC0000135.
+        $probe = $null
+        try { $probe = Invoke-DreddProcess -FilePath $b.IdeviceId -ArgumentList @('-h') -TimeoutSec 15 -Environment @{ PATH = ([System.IO.Path]::GetDirectoryName($b.IdeviceId) + ';' + [Environment]::GetEnvironmentVariable('PATH')) } } catch { }
+        $dllFail = (-not $probe) -or ($probe.ExitCode -in -1073741515, -1073741701) -or ($probe.Output -notmatch '(?i)usage')
+        $detail = if ($dllFail) { $(if ($probe) { 'idevice_id: exit 0x{0}' -f [BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$probe.ExitCode), 0).ToString('X8') } else { 'idevice_id: not started' }) } else { 'idevice_id: OK' }
+        & $add 'Dlls' $(if ($dllFail) { 'Error' } else { 'OK' }) $detail 'Diag.Hint.Dlls'
     }
     if ($p.IsWindows) {
         $amds = $null
