@@ -1,0 +1,24 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <!-- Нейтральная графитовая палитра; цвет несут только акцент и статусы. -->
+  <SolidColorBrush x:Key="Brush.Bg" Color="#16181C"/>
+  <SolidColorBrush x:Key="Brush.Sidebar" Color="#111316"/>
+  <SolidColorBrush x:Key="Brush.Surface" Color="#1C1F24"/>
+  <SolidColorBrush x:Key="Brush.Surface2" Color="#25292F"/>
+  <SolidColorBrush x:Key="Brush.Border" Color="#2E3238"/>
+  <SolidColorBrush x:Key="Brush.Text" Color="#E7E9EC"/>
+  <SolidColorBrush x:Key="Brush.TextMuted" Color="#8E949C"/>
+  <SolidColorBrush x:Key="Brush.Accent" Color="#4F8EF7"/>
+  <SolidColorBrush x:Key="Brush.AccentHover" Color="#679DF8"/>
+  <SolidColorBrush x:Key="Brush.AccentSoft" Color="#1F2C42"/>
+  <SolidColorBrush x:Key="Brush.AccentText" Color="#FFFFFF"/>
+  <SolidColorBrush x:Key="Brush.Success" Color="#4CC38A"/>
+  <SolidColorBrush x:Key="Brush.Warning" Color="#E0A84A"/>
+  <SolidColorBrush x:Key="Brush.WarningSoft" Color="#2E2719"/>
+  <SolidColorBrush x:Key="Brush.Danger" Color="#EC6A6A"/>
+  <SolidColorBrush x:Key="Brush.DangerSoft" Color="#341F21"/>
+  <SolidColorBrush x:Key="Brush.Hover" Color="#23272C"/>
+  <SolidColorBrush x:Key="Brush.Selected" Color="#243246"/>
+  <SolidColorBrush x:Key="Brush.LogBg" Color="#131518"/>
+  <SolidColorBrush x:Key="Brush.Scroll" Color="#3A3F46"/>
+</ResourceDictionary>

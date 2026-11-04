@@ -1,0 +1,19 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Width="480" SizeToContent="Height" MinHeight="160" WindowStartupLocation="CenterOwner" ShowInTaskbar="False" ResizeMode="NoResize"
+        Background="{DynamicResource Brush.Bg}" Foreground="{DynamicResource Brush.Text}" FontFamily="Segoe UI Variable Text, Segoe UI" FontSize="14" UseLayoutRounding="True">
+  <Grid Margin="22">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+    <DockPanel>
+      <TextBlock x:Name="DlgIcon" DockPanel.Dock="Left" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="26" Margin="0,2,16,0" VerticalAlignment="Top"/>
+      <StackPanel>
+        <TextBlock x:Name="DlgTitle" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" TextTrimming="None"/>
+        <TextBlock x:Name="DlgMessage" Style="{StaticResource Muted}" Margin="0,8,0,0" TextWrapping="Wrap" TextTrimming="None"/>
+      </StackPanel>
+    </DockPanel>
+    <StackPanel x:Name="DlgButtons" Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0"/>
+  </Grid>
+</Window>

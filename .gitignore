@@ -1,0 +1,27 @@
+# Белый список: в репозиторий попадает только перечисленное ниже. Всё остальное игнорируется по умолчанию:
+# Apps/ (IPA содержат Apple ID покупателя), Logs/, Files/ с историями, очередью и кэшем покупок, Settings.txt,
+# MainApp/ и MainApp_previous/ (бинарники скачиваются при первом запуске), dist/, собранный exe.
+/*
+!/.gitignore
+!/VERSION
+!/README.md
+!/LICENSE
+!/THIRD_PARTY_NOTICES.md
+!/CHANGELOG.md
+!/IPA_Dredd.ps1
+!/Start_IPA_Dredd_Windows.bat
+!/src/
+!/tests/
+!/tools/
+!/docs/
+!/Files/
+/Files/*
+!/Files/AppsList.txt
+
+# Внутри разрешённых папок — тоже никаких личных и собранных файлов:
+*.ipa
+*.log
+*.tmp
+*.part
+*.exe
+.ipatool/
