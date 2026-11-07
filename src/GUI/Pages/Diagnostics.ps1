@@ -7,7 +7,7 @@ function Initialize-DiagnosticsPage {
     $u.DiagOpenLogsBtn.Add_Click({ Safe { Open-DreddPath $script:Ctx.LogsDir } })
     $u.DiagUpdateListsBtn.Add_Click({ Safe { Start-DreddListsUpdate } })
     $u.DiagCheckUpdatesBtn.Add_Click({ Safe { Start-DreddUpdateCheck } })
-    $u.DiagRepoLink.Add_Click({ Safe { Open-DreddUrl 'https://github.com/kda2495/IPA_Downloader' } })
+    $u.DiagRepoLink.Add_Click({ Safe { Open-DreddUrl 'https://github.com/PiloTDredd/IPA_PILOTDREDD' } })
     # Чаевые автору PILOTDREDD: адрес — настройка TipJarUrl (по умолчанию CloudTips); без https-адреса кнопка скрыта.
     $u.DiagTipLink.Add_Click({ Safe { Open-DreddUrl ([string]$script:Ctx.Settings['TipJarUrl']) } })
     $u.DiagTipLink.Visibility = if ([string]$script:Ctx.Settings['TipJarUrl'] -match '^https://') { 'Visible' } else { 'Collapsed' }
@@ -79,12 +79,27 @@ function Start-DreddUpdateCheck {
     $script:UpdateInstallNow = [bool]$InstallNow
     if (-not $Startup) { Show-DreddToast -Kind Info -Title (T 'Update.Checking') -Progress }
     $script:UpdateTask = Start-DreddTask -Name (T 'Task.CheckUpdates') -Silent:$Startup -Script {
-        Test-DreddToolUpdate -Context $Context
+        $r = Test-DreddToolUpdate -Context $Context
+        # Новая версия самой программы (свои релизы на GitHub) — в том же запросе, одно уведомление.
+        $app = $null
+        try { $app = Test-DreddAppUpdate -Context $Context } catch { }
+        $r | Add-Member -NotePropertyName AppUpdate -NotePropertyValue $app -Force
+        $r
     } -OnComplete {
         param($r)
         $script:UpdateTask = $null
         $script:LastUpdateCheck = $r
-        if (-not $r.Ok) {
+        $app = $r.AppUpdate
+        if ($app -and $app.Ok) { Add-DreddLog -Level Info -Area 'Update' -Message (TF 'Log.AppVersion' @($app.Current, $app.Latest)) }
+        elseif ($app -and $app.Error) { Add-DreddLog -Level Warning -Area 'Update' -Message (TF 'Err.UpdateCheck' @($app.Error)) }
+        if ($app -and $app.IsNewer -and -not $script:UpdateInstallNow -and -not ($r.IsNewer -and $r.NeedsSetup)) {
+            # Новая IPA PILOTDREDD важнее остального: исправления, которые иначе до пользователя не дойдут.
+            $script:LastAppUpdate = $app
+            $text = TF 'AppUpdate.Text' @($app.Current)
+            if ($app.Notes) { $text += "`n`n" + ((@($app.Notes -split "`n") | Select-Object -First 6) -join "`n") }
+            if ($r.Ok -and $r.IsNewer -and $r.CanInstall) { $text += "`n`n" + (T 'AppUpdate.ToolToo') }
+            Show-DreddToast -Kind Info -Title (TF 'AppUpdate.Title' @($app.Latest)) -Text $text -ActionText (T 'AppUpdate.Open') -Action { Open-DreddUrl $script:LastAppUpdate.Url }
+        } elseif (-not $r.Ok) {
             Add-DreddLog -Level Warning -Area 'Update' -Message (TF 'Err.UpdateCheck' @($r.Error))
             Show-DreddToast -Kind Warning -Title (T 'Update.CheckFailed') -Text (T 'Update.CheckFailedText') -AutoHideMs 7000 -Low
         } elseif ($r.IsNewer -and $r.CanInstall -and $script:UpdateInstallNow) {

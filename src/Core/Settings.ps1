@@ -14,6 +14,8 @@ function Get-DreddDefaultSettings {
         DebugEnabled           = 'False'
         RemoteListBaseUrl      = 'https://raw.githubusercontent.com/kda2495/IPA_Downloader/refs/heads/main/Files'
         UpdateRepo             = 'kda2495/IPA_Downloader'
+        # Релизы самой программы: при запуске — уведомление «Вышла IPA PILOTDREDD X» (без автоматической замены файлов).
+        AppRepo                = 'PiloTDredd/IPA_PILOTDREDD'
         # Чаевые автору IPA PILOTDREDD (кнопка «Поддержать PILOTDREDD» в «Диагностике»).
         TipJarUrl              = 'https://pay.cloudtips.ru/p/129557e1'
     }

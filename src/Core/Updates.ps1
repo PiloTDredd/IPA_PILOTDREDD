@@ -49,6 +49,37 @@ function Get-DreddLatestRelease {
     [pscustomobject]@{ Tag = $tag; Version = [regex]::Match($tag, '\d+(\.\d+)+').Value; Url = "https://github.com/$repo/releases"; Asset = $asset }
 }
 
+function Test-DreddAppUpdate {
+    <#
+      Новая версия самой IPA PILOTDREDD (релизы AppRepo на GitHub). Результат: Ok, Current, Latest, IsNewer, Url, Notes, Error.
+      Только уведомление: файлы программы не заменяются (пользователь копирует новую папку поверх старой).
+      Url — всегда страница релиза на github.com (чужой адрес из ответа не открывается).
+    #>
+    param([Parameter(Mandatory)]$Context, [scriptblock]$Fetch)
+    if (-not $Fetch) { $Fetch = { param($url) Invoke-DreddWebText -Url $url -TimeoutSec 20 } }
+    $res = [ordered]@{ Ok = $false; Current = $script:DreddVersion; Latest = $null; IsNewer = $false; Url = $null; Notes = ''; Error = $null }
+    $repo = [string]$Context.Settings['AppRepo']
+    if ($repo -notmatch '^[\w.-]+/[\w.-]+$') { $res.Error = 'Invalid AppRepo'; return [pscustomobject]$res }
+    try {
+        $json = (& $Fetch "https://api.github.com/repos/$repo/releases/latest") | ConvertFrom-Json
+        $tag = [string](Get-DreddProp $json 'tag_name')
+        $ver = [regex]::Match($tag, '\d+\.\d+\.\d+').Value
+        $res.Ok = $true
+        $res.Latest = $ver
+        $res.Url = "https://github.com/$repo/releases/latest"
+        $html = [string](Get-DreddProp $json 'html_url' '')
+        if ($html -match "^https://github\.com/$([regex]::Escape($repo))/releases/") { $res.Url = $html }
+        # Заметки к релизу: без markdown-заголовков и пустых строк, не длиннее 500 символов.
+        $body = [string](Get-DreddProp $json 'body' '')
+        $lines = @($body -split "`r?`n" | ForEach-Object { ($_ -replace '^\s*#+\s*', '' -replace '\*\*', '').TrimEnd() } | Where-Object { $_.Trim() })
+        $notes = $lines -join "`n"
+        if ($notes.Length -gt 500) { $notes = $notes.Substring(0, 500).TrimEnd() + '…' }
+        $res.Notes = $notes
+        if ($ver) { $res.IsNewer = (Compare-DreddVersion $script:DreddVersion $ver) -eq -1 }
+    } catch { $res.Error = $_.Exception.Message }
+    return [pscustomobject]$res
+}
+
 function Test-DreddToolUpdate {
     <#
       Тихая проверка: Ok, Current, Latest, IsNewer, CanInstall, Reason, Release, NeedsSetup.

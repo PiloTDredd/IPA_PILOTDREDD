@@ -674,6 +674,175 @@ Test 'Install: a device that briefly disappears is retried; a missing device giv
     } finally { $env:FAKE_NO_DEVICE = $null }
 }
 
+function New-DeviceContext {
+    $ctx = New-TestContext
+    $ctx.Binaries.IdeviceId = Join-Path $fixtures 'fake-idevice_id.cmd'
+    $ctx.Binaries.IdeviceInfo = Join-Path $fixtures 'fake-ideviceinfo.cmd'
+    $ctx.Binaries.IdeviceInstaller = Join-Path $fixtures 'fake-ideviceinstaller.cmd'
+    return $ctx
+}
+
+Test 'Devices: Wi-Fi devices are found with -n; a device on cable and Wi-Fi is listed once as cable' {
+    $ctx = New-DeviceContext
+    $env:FAKE_WIFI_DEVICE = '1'
+    try {
+        $r = Get-DreddDevices -Context $ctx
+        Assert-True $r.Ok "scan failed: $($r.ErrorKey)"
+        Assert-Equal 2 @($r.Devices).Count 'USB + Wi-Fi devices expected.'
+        $usb = $r.Devices | Where-Object { $_.UDID -eq '00008110-000A1B2C3D4E5F60' }
+        $wifi = $r.Devices | Where-Object { $_.UDID -eq '00008030-00112233445566AA' }
+        Assert-Equal 'usb' $usb.Connection
+        Assert-Equal 'network' $wifi.Connection
+        Assert-Equal 'Test iPad' $wifi.Name 'Wi-Fi device info must be read with -n.'
+        Assert-Equal '16.7' $wifi.iOSVersion
+        $env:FAKE_WIFI_DEVICE = 'both'
+        $r2 = Get-DreddDevices -Context $ctx
+        Assert-Equal 1 @($r2.Devices).Count 'a device visible by cable and Wi-Fi must be listed once.'
+        Assert-Equal 'usb' $r2.Devices[0].Connection
+    } finally { $env:FAKE_WIFI_DEVICE = $null }
+    Assert-Equal 2 @(ConvertFrom-DreddUdidList "00008110-000A1B2C3D4E5F60 (USB)`r`n00008030-00112233445566AA (Network)`r`nERROR: x").Count
+}
+
+Test 'Install over Wi-Fi passes -n to ideviceinstaller' {
+    $ctx = New-DeviceContext
+    $ipa = Join-Path $ctx.AppRoot 'Test.ipa'; [System.IO.File]::WriteAllText($ipa, 'x')
+    $log = Join-Path $TestRoot ('wifi_' + [guid]::NewGuid().ToString('N').Substring(0, 6) + '.log')
+    $env:FAKE_WIFI_DEVICE = '1'; $env:FAKE_INSTALL_LOG = $log
+    try {
+        $r = Install-DreddIpa -Context $ctx -IpaPath $ipa -UDID '00008030-00112233445566AA'
+        Assert-True $r.Ok "Wi-Fi install failed: $($r.ErrorKey) $($r.Message)"
+        Assert-Match ([System.IO.File]::ReadAllText($log)) '-u 00008030-00112233445566AA -n install' 'ideviceinstaller called without -n for a Wi-Fi device.'
+    } finally { $env:FAKE_WIFI_DEVICE = $null; $env:FAKE_INSTALL_LOG = $null }
+}
+
+Test 'Wi-Fi: "Mux error" is retried without upgrade and reported as Wi-Fi, not as an untrusted device' {
+    $ctx = New-DeviceContext
+    $ipa = Join-Path $ctx.AppRoot 'Test.ipa'; [System.IO.File]::WriteAllText($ipa, 'x')
+    $udid = '00008030-00112233445566AA'
+    $log = Join-Path $TestRoot ('mux_' + [guid]::NewGuid().ToString('N').Substring(0, 6) + '.log')
+    $env:FAKE_WIFI_DEVICE = '1'; $env:FAKE_INSTALL_LOG = $log
+    $env:FAKE_MUX_ONCE = Join-Path $TestRoot ('muxonce_' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+    try {
+        $r = Install-DreddIpa -Context $ctx -IpaPath $ipa -UDID $udid
+        Assert-True $r.Ok "install after a sleeping Wi-Fi phone woke up failed: $($r.ErrorKey) $($r.Message)"
+        Assert-NotMatch ([System.IO.File]::ReadAllText($log)) 'upgrade' 'upgrade must not be tried when the device does not respond.'
+        $env:FAKE_MUX_ONCE = $null; $env:FAKE_MUX_ERROR = 'always'
+        $r2 = Install-DreddIpa -Context $ctx -IpaPath $ipa -UDID $udid
+        Assert-Equal 'Err.WifiUnreachable' $r2.ErrorKey
+        Assert-Equal 'Err.WifiUnreachable' (Get-DreddDeviceApps -Context $ctx -Udid $udid).ErrorKey
+    } finally { $env:FAKE_WIFI_DEVICE = $null; $env:FAKE_INSTALL_LOG = $null; $env:FAKE_MUX_ONCE = $null; $env:FAKE_MUX_ERROR = $null }
+    Assert-Equal 'Err.DeviceGone' (Get-DreddDeviceErrorKey -Text 'Could not connect to lockdownd: Mux error. Exiting.' -Connection 'usb')
+    Assert-Equal 'Err.NotTrusted' (Get-DreddDeviceErrorKey -Text 'ERROR: Could not connect to lockdownd: Pairing dialog response pending' -Connection 'network')
+    Assert-Equal 'Err.NotTrusted' (Get-DreddDeviceErrorKey -Text 'Could not connect to lockdownd. Exiting.' -Connection 'usb')
+    Assert-Equal $null (Get-DreddDeviceErrorKey -Text 'ERROR: APIInternalError' -Connection 'usb')
+}
+
+Test 'Device apps: XML with App Store IDs, text fallback, both text formats, unknown output' {
+    $ctx = New-DeviceContext
+    $udid = '00008110-000A1B2C3D4E5F60'
+    $x = Get-DreddDeviceApps -Context $ctx -Udid $udid
+    Assert-True $x.Ok "XML list failed: $($x.ErrorKey) $($x.Message)"
+    Assert-Equal 'xml+meta' $x.Format
+    Assert-Equal 2 @($x.Apps).Count
+    $n = $x.Apps | Where-Object { $_.BundleId -eq 'com.example.newapp' }
+    Assert-Equal '2222222' $n.ItemId 'App Store ID from iTunesMetadata not read.'
+    Assert-Equal '2.0' $n.Version
+    Assert-Equal 'Not Purchased' ($x.Apps | Where-Object { $_.BundleId -eq 'com.example.notpurchased' }).Name 'CFBundleName fallback.'
+    $env:FAKE_APPS_FORMAT = 'text'
+    try {
+        $t = Get-DreddDeviceApps -Context $ctx -Udid $udid -Connection 'usb'
+        Assert-True $t.Ok "text fallback failed: $($t.ErrorKey)"
+        Assert-Equal 'text' $t.Format
+        Assert-Equal 2 @($t.Apps).Count
+        Assert-Equal '5.1' ($t.Apps | Where-Object { $_.BundleId -eq 'com.example.notpurchased' }).Version
+        $env:FAKE_APPS_FORMAT = 'garbage'
+        $g = Get-DreddDeviceApps -Context $ctx -Udid $udid -Connection 'usb'
+        Assert-False $g.Ok 'unrecognized output must not look like an empty phone.'
+        Assert-Equal 'Err.DeviceAppsFormat' $g.ErrorKey
+    } finally { $env:FAKE_APPS_FORMAT = $null }
+    $old = @(ConvertFrom-DreddDeviceAppsText "Total: 2 apps`r`nru.sberbank.app - Sber Online 15.4.1`r`ncom.example.x - My App 2 1.0")
+    Assert-Equal 2 $old.Count 'ideviceinstaller 1.1.0 text format.'
+    Assert-Equal 'My App 2' $old[1].Name
+    Assert-Equal '1.0' $old[1].Version
+    Assert-Equal 0 @(ConvertFrom-DreddDeviceAppsText "CFBundleIdentifier, CFBundleShortVersionString, CFBundleDisplayName`r`n").Count 'empty phone.'
+    $env:FAKE_NO_DEVICE = '1'
+    try { Assert-Equal 'Err.DeviceGone' (Get-DreddDeviceApps -Context $ctx -Udid $udid).ErrorKey } finally { $env:FAKE_NO_DEVICE = $null }
+}
+
+Test 'Device apps compared with purchases: App Store ID, bundle id, local IPA, outdated, unknown' {
+    $apps = @(
+        [pscustomobject]@{ Id = '1'; BundleId = 'com.a'; Version = '2.0'; Lookup = 'Found' },
+        [pscustomobject]@{ Id = '2'; BundleId = 'com.b'; Version = '3.0'; Lookup = 'Found' },
+        [pscustomobject]@{ Id = '3'; BundleId = 'com.c'; Version = '1.0'; Lookup = 'Found' },
+        [pscustomobject]@{ Id = '4'; BundleId = ''; Version = ''; Lookup = 'Missing' },
+        [pscustomobject]@{ Id = '5'; BundleId = ''; Version = ''; Lookup = 'Missing' })
+    $device = @(
+        [pscustomobject]@{ BundleId = 'COM.A'; Version = '2.0'; ItemId = $null },
+        [pscustomobject]@{ BundleId = 'com.b'; Version = '2.9'; ItemId = $null },
+        [pscustomobject]@{ BundleId = 'com.local'; Version = '1.0'; ItemId = $null })
+    $m = Compare-DreddDeviceApps -Apps $apps -DeviceApps $device -LocalBundles @{ '4' = 'com.local' }
+    Assert-Equal 'Installed' $m['1'].State 'bundle id match is case-insensitive.'
+    Assert-Equal 'Outdated' $m['2'].State
+    Assert-Equal '2.9' $m['2'].DeviceVersion
+    Assert-Equal 'Missing' $m['3'].State
+    Assert-Equal 'Installed' $m['4'].State 'bundle id of a downloaded IPA must be used for removed apps.'
+    Assert-Equal 'Unknown' $m['5'].State 'without bundle id and App Store IDs the app must not be reported as missing.'
+    # Устройство отдало App Store ID — тогда «нет ID» = «нет на устройстве» и без bundle id.
+    $m2 = Compare-DreddDeviceApps -Apps $apps -DeviceApps @([pscustomobject]@{ BundleId = 'com.z'; Version = '1'; ItemId = '5' })
+    Assert-Equal 'Installed' $m2['5'].State 'App Store ID match.'
+    Assert-Equal 'Missing' $m2['4'].State
+    # Запись, добавленная программой после установки, не делает неизвестное «отсутствующим».
+    $m3 = Compare-DreddDeviceApps -Apps $apps -DeviceApps @([pscustomobject]@{ BundleId = ''; Version = '1'; ItemId = '3'; Synthetic = $true })
+    Assert-Equal 'Installed' $m3['3'].State
+    Assert-Equal 'Unknown' $m3['5'].State
+}
+
+Test 'App update: newer release, same version, foreign URL ignored, notes trimmed' {
+    $ctx = New-TestContext
+    $cur = Get-DreddVersion
+    $json = { param($tag, $url, $body) $j = @{ tag_name = $tag; html_url = $url; body = $body } | ConvertTo-Json; { $j }.GetNewClosure() }
+    $new = Test-DreddAppUpdate -Context $ctx -Fetch (& $json 'v99.0.0' 'https://evil.example.com/x' ("## What's new`n`n- **Wi-Fi** install`n" + ('x' * 900)))
+    Assert-True $new.Ok
+    Assert-True $new.IsNewer
+    Assert-Equal '99.0.0' $new.Latest
+    Assert-Equal 'https://github.com/PiloTDredd/IPA_PILOTDREDD/releases/latest' $new.Url 'a URL outside the release page must not be opened.'
+    Assert-True ($new.Notes.Length -le 501) 'notes not trimmed.'
+    Assert-Match $new.Notes "^What's new`n- Wi-Fi install" 'markdown headers/bold not removed.'
+    $same = Test-DreddAppUpdate -Context $ctx -Fetch (& $json "v$cur" "https://github.com/PiloTDredd/IPA_PILOTDREDD/releases/tag/v$cur" '')
+    Assert-False $same.IsNewer
+    Assert-Match $same.Url "/releases/tag/v$cur$"
+    $off = Test-DreddAppUpdate -Context $ctx -Fetch { throw 'offline' }
+    Assert-False $off.Ok
+    Assert-False $off.IsNewer
+}
+
+Test 'Free space: download refused before ipatool when the disk is too small' {
+    $ctx = New-TestContext
+    Assert-True (Test-DreddFreeSpace -Folders @($ctx.TempRoot) -ExpectedBytes 1MB).Ok 'a 1 MB app must fit.'
+    $huge = 1024L * 1TB
+    $s = Test-DreddFreeSpace -Folders @($ctx.TempRoot) -ExpectedBytes $huge
+    Assert-False $s.Ok
+    Assert-True ($s.NeedBytes -gt $huge)
+    $log = Join-Path $TestRoot ('space_' + [guid]::NewGuid().ToString('N').Substring(0, 6) + '.log')
+    $r = Invoke-DreddDownload -Context $ctx -AppId '1234567' -AppName 'Fake App' -ExpectedBytes $huge
+    Assert-False $r.Ok
+    Assert-Equal 'Err.NoSpace' $r.Error.Key
+    Assert-Equal 0 @([System.IO.Directory]::GetFiles($ctx.DownloadDir, '*.ipa')).Count
+}
+
+Test 'Icons: only App Store artwork URLs are downloaded' {
+    $ctx = New-TestContext
+    $n = Save-DreddIcons -Context $ctx -Apps @([pscustomobject]@{ Id = '1'; ArtworkUrl = 'https://evil.example.com/a/100x100bb.jpg' }, [pscustomobject]@{ Id = 'x'; ArtworkUrl = '' })
+    Assert-Equal 0 $n
+}
+
+Test 'Login broken by Apple (status=301/204, redirect without location) is not reported as a wrong password' {
+    foreach ($o in 'Login error: something went wrong (status=301)', 'Login error: something went wrong (status=204)', 'Login error: something went wrong (status=403)', 'Login error: something went wrong (status=404)', 'Login error: something went wrong (status=500)', 'Login error: redirect with no location header') {
+        Assert-Equal 'Err.AppleLoginChanged' (Resolve-DreddToolError -Output $o).Key $o
+    }
+    Assert-Equal 'Err.BadCredentials' (Resolve-DreddToolError -Output 'Login error: incorrect password').Key
+}
+
 Test 'Queue state: saved per account, empty queue removes the file' {
     $ctx = New-TestContext
     $a = Get-DreddAccountKey 'a@example.com'; $b = Get-DreddAccountKey 'b@example.com'
@@ -729,6 +898,9 @@ Test 'Localization: RU and EN have the same keys; every key used in XAML and GUI
     foreach ($s in 'app', 'v4.2', 'v4.1', 'settings') { [void]$used.Add("Source.$s") }
     foreach ($s in 'Popular', 'Custom', 'AppStore', 'ID', 'Purchases', 'Script') { [void]$used.Add("Source.App.$s") }
     foreach ($s in 'Ready', 'NotTrusted', 'Error') { [void]$used.Add("Device.Status.$s") }
+    foreach ($s in 'usb', 'network') { [void]$used.Add("Device.Conn.$s") }
+    [void]$used.Add('Status.Step.wifiwait')
+    foreach ($s in 'All', 'Available', 'Downloaded', 'UpdateAvailable', 'NotInStore', 'Problems', 'NotOnDevice', 'OnDevice', 'DeviceOutdated') { [void]$used.Add("Purchases.Tab.$s") }
     foreach ($c in (Get-DreddDiagnostics -Context (New-TestContext))) { [void]$used.Add("Diag.Check.$($c.Id)"); [void]$used.Add($c.HintKey) }
     foreach ($id in 'Dlls', 'AppleDriver') { [void]$used.Add("Diag.Check.$id") }
     # Ключи ошибок, которые возвращает Core:

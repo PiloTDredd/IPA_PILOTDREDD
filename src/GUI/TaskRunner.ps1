@@ -15,7 +15,7 @@ $__sb = [scriptblock]::Create($__script)
 '@
 
 function Initialize-DreddTaskRunner {
-    param([Parameter(Mandatory)][string]$CoreModulePath, [int]$MaxThreads = 4)
+    param([Parameter(Mandatory)][string]$CoreModulePath, [int]$MaxThreads = 8)
     $iss = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
     try { $iss.ExecutionPolicy = [Microsoft.PowerShell.ExecutionPolicy]::Bypass } catch { }
     $iss.ImportPSModule(@($CoreModulePath))

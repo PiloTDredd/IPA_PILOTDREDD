@@ -12,12 +12,18 @@ $script:PurchaseLoadTask = $null
 $script:PurchaseIconTask = $null
 $script:PurchaseScanError = $null
 $script:PurchaseScanStep = $null
+# Сравнение с iPhone: @{ Udid; Name; Ios; Apps (ideviceinstaller list); At } и результат ID → { State; DeviceVersion }.
+$script:DeviceCompare = $null
+$script:DeviceMap = @{}
+$script:DeviceAppsTask = $null
+$script:DeviceStateOrder = @{ Missing = 0; Outdated = 1; Installed = 2; Unknown = 3 }
 
 # Порядок сортировки по статусу: сначала то, что требует действия.
 $script:PurchaseStatusOrder = @{ Running = 0; Queued = 1; UpdateAvailable = 2; Available = 3; Failed = 4; NotInStore = 5; Unverified = 6; Downloaded = 7 }
 $script:PurchaseTabs = [ordered]@{
     PurTabAll = 'All'; PurTabAvailable = 'Available'; PurTabDownloaded = 'Downloaded'
     PurTabUpdates = 'UpdateAvailable'; PurTabMissing = 'NotInStore'; PurTabProblems = 'Problems'
+    PurTabNotOnDevice = 'NotOnDevice'; PurTabOnDevice = 'OnDevice'; PurTabDeviceOutdated = 'DeviceOutdated'
 }
 
 function Initialize-PurchasesPage {
@@ -38,6 +44,9 @@ function Initialize-PurchasesPage {
     $u.PurSearch.Add_TextChanged({ $script:PurSearchTimer.Stop(); $script:PurSearchTimer.Start() })
 
     $u.PurScanBtn.Add_Click({ Safe { Start-DreddPurchaseScan } })
+    $u.PurDeviceBtn.Add_Click({ Safe { Start-DreddDeviceAppsScan } })
+    # Колонка «На iPhone» видна, когда есть с чем сравнивать (DataGridColumn не ищется по x:Name — берём по SortMemberPath).
+    $script:PurDeviceColumn = $u.PurGrid.Columns | Where-Object { $_.SortMemberPath -eq 'DeviceOrder' } | Select-Object -First 1
     $u.PurCancelBtn.Add_Click({ Safe { if ($script:PurchaseScanTask) { Stop-DreddTask $script:PurchaseScanTask.Id } } })
     $u.PurEmptyBtn.Add_Click({ Safe { Invoke-DreddPurchaseEmptyAction } })
     $u.PurDownloadBtn.Add_Click({ Safe { Invoke-DreddPurchaseDownload @($script:UI.PurGrid.SelectedItems) } })
@@ -144,6 +153,8 @@ function Set-DreddPurchaseLibrary {
             Update-DreddPurchaseRow $row
             $script:PurchaseRows.Add($row)
         }
+        Update-DreddDeviceCompare
+        foreach ($row in $script:PurchaseRows) { Update-DreddPurchaseDeviceInfo $row }
         Start-DreddIconFetch
     }
     Update-PurchasesView
@@ -162,7 +173,8 @@ function Get-DreddLocalIpaMap {
 }
 
 function Update-DreddPurchaseStatuses {
-    # Пересчёт всех строк (после обновления локальной библиотеки, смены языка, загрузки).
+    # Пересчёт всех строк (после обновления локальной библиотеки, смены языка, загрузки, поиска устройств).
+    Update-DreddDeviceCompare
     $map = Get-DreddLocalIpaMap
     foreach ($row in $script:PurchaseRows) { Update-DreddPurchaseRow $row -LocalMap $map }
     Update-PurchasesView
@@ -172,6 +184,7 @@ function Update-DreddPurchaseRow {
     param([IPADredd.Gui.PurchaseRow]$Row, [hashtable]$LocalMap)
     $a = $script:PurchaseApps[$Row.Id]
     if (-not $a) { return }
+    Update-DreddPurchaseDeviceInfo $Row
     if (-not $LocalMap) { $LocalMap = Get-DreddLocalIpaMap }
     $local = $LocalMap[$Row.Id]
 
@@ -255,7 +268,7 @@ function Update-DreddPurchaseFromQueue {
         $a = $script:PurchaseApps[$Item.AppId]
         # То же, что ядро записало в кэш (Set-DreddPurchaseAttempt), — без повторного чтения файла.
         if ($a -and $Item.Status -eq 'Done') { $a.LastErrorKey = ''; $a.LastErrorMessage = '' }
-        elseif ($a -and $Item.Status -eq 'Error' -and $Item.ErrorKey) { $a.LastErrorKey = $Item.ErrorKey; $a.LastErrorMessage = $Item.ErrorMessage; $a.LastAttemptAt = (Get-Date).ToString('s') }
+        elseif ($a -and $Item.Status -eq 'Error' -and $Item.ErrorKey -and $Item.ErrorKey -ne 'Err.NoSpace') { $a.LastErrorKey = $Item.ErrorKey; $a.LastErrorMessage = $Item.ErrorMessage; $a.LastAttemptAt = (Get-Date).ToString('s') }
     }
     Update-DreddPurchaseRow $row
     Update-PurchaseCounts
@@ -272,6 +285,9 @@ function Test-DreddPurchaseVisible {
         'Problems' { $base -in 'Failed', 'Unverified' }
         # Вкладка «Нет в App Store» — все снятые с продажи, в том числе уже скачанные.
         'NotInStore' { Test-DreddPurchaseMissing $Row.Id }
+        'NotOnDevice' { $Row.DeviceState -eq 'Missing' }
+        'OnDevice' { $Row.DeviceState -in 'Installed', 'Outdated' }
+        'DeviceOutdated' { $Row.DeviceState -eq 'Outdated' }
         default { $base -eq $script:PurchaseFilter }
     }
     if (-not $ok) { return $false }
@@ -287,7 +303,14 @@ function Test-DreddPurchaseMissing {
 }
 
 function Update-PurchaseCounts {
-    $c = @{ All = 0; Available = 0; Downloaded = 0; UpdateAvailable = 0; NotInStore = 0; Problems = 0 }
+    $c = @{ All = 0; Available = 0; Downloaded = 0; UpdateAvailable = 0; NotInStore = 0; Problems = 0; NotOnDevice = 0; OnDevice = 0; DeviceOutdated = 0 }
+    foreach ($row in $script:PurchaseRows) {
+        switch ($row.DeviceState) {
+            'Missing' { $c.NotOnDevice++ }
+            'Installed' { $c.OnDevice++ }
+            'Outdated' { $c.OnDevice++; $c.DeviceOutdated++ }
+        }
+    }
     foreach ($id in $script:PurchaseBase.Keys) {
         $c.All++
         if (Test-DreddPurchaseMissing $id) { $c.NotInStore++ }
@@ -323,6 +346,10 @@ function Update-PurchasesView {
     $loading = [bool]$script:PurchaseLoadTask
     $loggedIn = $script:Account -and $script:Account.Success
     $u.PurScanBtn.IsEnabled = $loggedIn -and -not $scanning -and [bool]$script:Ctx.Binaries.Ipatool
+    $u.PurDeviceBtn.IsEnabled = $script:PurchaseRows.Count -gt 0 -and -not $script:DeviceAppsTask -and [bool]$script:Ctx.Binaries.IdeviceInstaller
+    if ($script:PurDeviceColumn) {
+        $script:PurDeviceColumn.Visibility = if ($script:DeviceCompare -or (Get-DreddPurchaseTargetDevice)) { 'Visible' } else { 'Collapsed' }
+    }
     $u.PurCancelBtn.Visibility = if ($scanning) { 'Visible' } else { 'Collapsed' }
     $u.PurSearch.IsEnabled = $script:PurchaseRows.Count -gt 0
 
@@ -336,7 +363,13 @@ function Update-PurchasesView {
         if ($script:PurchaseLib.Storefront) { $info += ' · ' + (TF 'Dash.Storefront' @($script:PurchaseLib.Storefront)) }
         if (-not $script:PurchaseLib.LookupOk) { $info += ' · ' + (T 'Purchases.LookupPartial') }
     }
+    if ($script:DeviceAppsTask) { $info = TF 'Purchases.DevScanning' @($script:DeviceAppsTask.DeviceName) }
+    elseif ($script:DeviceCompare -and -not $scanning) {
+        $dc = TF 'Purchases.DevInfo' @($script:DeviceCompare.Name, $script:DeviceCompare.At.ToString('t'))
+        $info = if ($info) { "$info · $dc" } else { $dc }
+    }
     $u.PurScanInfo.Text = $info
+    $u.PurScanInfo.ToolTip = if ($info) { $info } else { $null }
 
     # Пустые состояния: одно понятное действие.
     $title = $null; $text = ''; $btn = $null; $busy = $false
@@ -499,4 +532,115 @@ function Start-DreddIconFetch {
         $script:PurchaseIconTask = $null
         Add-DreddLog -Level Warning -Area 'Icons' -Message $m
     }
+}
+
+# ---------------- Сравнение с iPhone ----------------
+
+function Get-DreddPurchaseTargetDevice {
+    # Устройство для колонки «На iPhone»: то, с которым сравнивали, иначе единственное готовое. @{ Udid; Name; Ios } или $null.
+    if ($script:DeviceCompare) { return $script:DeviceCompare }
+    $ready = @($script:DeviceRows | Where-Object { $_.Status -eq 'Ready' })
+    if ($ready.Count -eq 1) { return @{ Udid = $ready[0].Udid; Name = $ready[0].Name; Ios = $ready[0].IosVersion } }
+    return $null
+}
+
+function Get-DreddLocalBundleMap {
+    # App Store ID → bundle id из скачанных IPA (для приложений, которых нет в App Store и Lookup не дал bundle id).
+    $m = @{}
+    foreach ($l in $script:LibraryRows) { if ($l.AppStoreId -and $l.BundleId -and -not $m.ContainsKey($l.AppStoreId)) { $m[$l.AppStoreId] = $l.BundleId } }
+    return $m
+}
+
+function Update-DreddDeviceCompare {
+    # Пересчитывает сопоставление «покупки ↔ приложения на iPhone» (после сканирования, смены аккаунта, новых IPA).
+    $script:DeviceMap = @{}
+    if (-not $script:DeviceCompare -or $script:PurchaseApps.Count -eq 0) { return }
+    $script:DeviceMap = Compare-DreddDeviceApps -Apps @($script:PurchaseApps.Values) -DeviceApps @($script:DeviceCompare.Apps) -LocalBundles (Get-DreddLocalBundleMap)
+}
+
+function Update-DreddPurchaseDeviceInfo {
+    # Колонка «На iPhone»: состояние на устройстве и совместимость с его iOS (минимальная iOS — из App Store Lookup).
+    param([IPADredd.Gui.PurchaseRow]$Row)
+    $a = $script:PurchaseApps[$Row.Id]
+    $dev = Get-DreddPurchaseTargetDevice
+    if (-not $a -or -not $dev) { $Row.DeviceState = ''; $Row.DeviceText = ''; $Row.DeviceDetail = $null; $Row.DeviceOrder = 9; return }
+    $m = $script:DeviceMap[$Row.Id]
+    $state = if ($script:DeviceCompare -and $m) { $m.State } else { '' }
+    $Row.DeviceState = $state
+    $Row.DeviceOrder = if ($state) { $script:DeviceStateOrder[$state] } else { 9 }
+    $text = ''; $detail = $null
+    switch ($state) {
+        'Installed' { $text = TF 'Purchases.Dev.Installed' @($m.DeviceVersion); $detail = TF 'Purchases.DevDetail.Installed' @($dev.Name, $m.DeviceVersion) }
+        'Outdated' { $text = TF 'Purchases.Dev.Outdated' @($m.DeviceVersion); $detail = TF 'Purchases.DevDetail.Outdated' @($dev.Name, $m.DeviceVersion, $a.Version) }
+        'Missing' { $text = T 'Purchases.Dev.Missing'; $detail = TF 'Purchases.DevDetail.Missing' @($dev.Name) }
+        'Unknown' { $text = T 'Purchases.Dev.Unknown'; $detail = T 'Purchases.DevDetail.Unknown' }
+    }
+    # Не установлено и не пойдёт на iOS этого устройства — важнее, чем «нет».
+    if ($state -notin 'Installed', 'Outdated' -and $a.MinIOS -and (Test-DreddIosCompatible -MinIOS $a.MinIOS -DeviceVersion $dev.Ios) -eq $false) {
+        $text = TF 'Purchases.Dev.NeedIos' @($a.MinIOS)
+        $need = TF 'Purchases.DevDetail.NeedIos' @($a.MinIOS, $dev.Name, $dev.Ios)
+        $detail = if ($detail) { "$detail`n$need" } else { $need }
+    }
+    $Row.DeviceText = $text
+    $Row.DeviceDetail = $detail
+}
+
+function Start-DreddDeviceAppsScan {
+    # «Сравнить с iPhone»: список приложений устройства → сопоставление с покупками → вкладка «Нет на iPhone».
+    if ($script:DeviceAppsTask) { return }
+    if ($script:PurchaseRows.Count -eq 0) {
+        Show-DreddToast -Kind Info -Title (T 'Purchases.DevNeedLibrary') -Text (T 'Purchases.DevNeedLibraryText') -AutoHideMs 6000
+        return
+    }
+    $dev = Get-DreddInstallTarget -Retry { Start-DreddDeviceAppsScan }
+    if (-not $dev) { return }
+    Hide-DreddToast
+    $script:DeviceAppsTask = Start-DreddTask -Name (T 'Task.DeviceApps') -Arguments @{ Udid = $dev.Udid; Connection = $dev.Connection } -Script {
+        Get-DreddDeviceApps -Context $Context -Udid $A.Udid -Connection $A.Connection -Reporter $Reporter -CancellationToken $Token
+    } -OnComplete {
+        param($r, $t)
+        $script:DeviceAppsTask = $null
+        if ($r.Ok) {
+            $script:DeviceCompare = @{ Udid = $t.Udid; Name = $t.DeviceName; Ios = $t.Ios; Apps = @($r.Apps); At = Get-Date }
+            Update-DreddPurchaseStatuses
+            $n = @{ Installed = 0; Missing = 0; Unknown = 0 }
+            foreach ($row in $script:PurchaseRows) {
+                switch ($row.DeviceState) { 'Installed' { $n.Installed++ } 'Outdated' { $n.Installed++ } 'Missing' { $n.Missing++ } 'Unknown' { $n.Unknown++ } }
+            }
+            $text = TF 'Purchases.DevDoneText' @($n.Installed, $n.Missing, $n.Unknown)
+            Add-DreddLog -Level Success -Area 'Devices' -Message ((TF 'Purchases.DevDone' @($t.DeviceName)) + ': ' + $text)
+            if ($n.Missing -gt 0) { $script:UI.PurTabNotOnDevice.IsChecked = $true }
+            Show-DreddToast -Kind Success -Title (TF 'Purchases.DevDone' @($t.DeviceName)) -Text $text -AutoHideMs 8000
+        } elseif ($r.ErrorKey -ne 'Err.Cancelled') {
+            $txt = Get-DreddErrorText $r.ErrorKey $(if ($r.ErrorKey -eq 'Err.DeviceAppsFormat') { '' } else { $r.Message })
+            Add-DreddLog -Level Error -Area 'Devices' -Message ((TF 'Purchases.DevFailed' @($t.DeviceName)) + ': ' + $txt)
+            Show-DreddToast -Kind Error -Title (TF 'Purchases.DevFailed' @($t.DeviceName)) -Text $txt
+        }
+        Update-PurchasesView
+    } -OnError {
+        param($m, $t)
+        $script:DeviceAppsTask = $null
+        Add-DreddLog -Level Error -Area 'Devices' -Message $m
+        Show-DreddToast -Kind Error -Title (TF 'Purchases.DevFailed' @($t.DeviceName)) -Text $m
+        Update-PurchasesView
+    }
+    $script:DeviceAppsTask | Add-Member -NotePropertyName Udid -NotePropertyValue $dev.Udid -Force
+    $script:DeviceAppsTask | Add-Member -NotePropertyName DeviceName -NotePropertyValue $dev.Name -Force
+    $script:DeviceAppsTask | Add-Member -NotePropertyName Ios -NotePropertyValue $dev.IosVersion -Force
+    Update-PurchasesView
+}
+
+function Set-DreddDeviceAppInstalled {
+    # После успешной установки на тот же iPhone, с которым сравнивали: приложение отмечается как установленное.
+    param([string]$AppId, [string]$Udid, [string]$Version)
+    if (-not $script:DeviceCompare -or $script:DeviceCompare.Udid -ne $Udid -or $AppId -notmatch '^\d+$') { return }
+    $a = $script:PurchaseApps[$AppId]
+    $bundle = if ($a -and $a.BundleId) { [string]$a.BundleId } else { [string](Get-DreddLocalBundleMap)[$AppId] }
+    # Synthetic: App Store ID добавлен программой, а не получен от устройства (не влияет на правило «нет ID — нет на iPhone»).
+    $script:DeviceCompare.Apps = @($script:DeviceCompare.Apps | Where-Object { $_.ItemId -ne $AppId -and (-not $bundle -or $_.BundleId -ne $bundle) }) +
+        @([pscustomobject]@{ BundleId = $bundle; Name = ''; Version = $Version; Build = ''; ItemId = $AppId; Synthetic = $true })
+    Update-DreddDeviceCompare
+    $row = $script:PurchaseById[$AppId]
+    if ($row) { Update-DreddPurchaseDeviceInfo $row }
+    Update-PurchasesView
 }

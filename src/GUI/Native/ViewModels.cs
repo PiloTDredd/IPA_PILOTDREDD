@@ -147,6 +147,10 @@ namespace IPADredd.Gui
         public string Status { get; set; }
         public string Detail { get; set; }
         public string StatusText { get { return _statusText; } set { Set(ref _statusText, value, "StatusText"); } }
+        // Подключение: usb | network (Wi-Fi); текст — из локализации.
+        private string _connectionText = "";
+        public string Connection { get; set; }
+        public string ConnectionText { get { return _connectionText; } set { Set(ref _connectionText, value, "ConnectionText"); } }
     }
 
     public class VersionRow : Bindable
@@ -187,6 +191,14 @@ namespace IPADredd.Gui
         public bool ShowProgress { get { return _showProgress; } set { Set(ref _showProgress, value, "ShowProgress"); } }
         public bool IsIndeterminate { get { return _indeterminate; } set { Set(ref _indeterminate, value, "IsIndeterminate"); } }
         public string Initial { get { return string.IsNullOrEmpty(_name) ? "?" : _name.Substring(0, 1).ToUpperInvariant(); } }
+
+        // Сравнение с iPhone: DeviceState (Installed, Outdated, Missing, Unknown или пусто), текст колонки и подсказка.
+        private string _deviceText = "", _deviceDetail, _deviceState = "";
+        private int _deviceOrder = 9;
+        public string DeviceState { get { return _deviceState; } set { Set(ref _deviceState, value, "DeviceState"); } }
+        public string DeviceText { get { return _deviceText; } set { Set(ref _deviceText, value, "DeviceText"); } }
+        public string DeviceDetail { get { return _deviceDetail; } set { Set(ref _deviceDetail, value, "DeviceDetail"); } }
+        public int DeviceOrder { get { return _deviceOrder; } set { Set(ref _deviceOrder, value, "DeviceOrder"); } }
 
         public string IconPath
         {

@@ -12,12 +12,14 @@
 - **Честные статусы** — «Можно скачать», «Скачано», «Есть новая версия», «Нет в App Store», «Не удалось скачать» (только после реальной попытки, с текстом ответа Apple), «Не проверено». Никаких выдуманных «не куплено».
 - **Приложения, снятые с продажи** — отдельная вкладка. Apple часто продолжает отдавать купленное даже после удаления из магазина — кнопка «Попробовать».
 - **Скачать и установить** — одна кнопка: скачивает IPA и ставит на подключённый iPhone/iPad, с проверкой версии iOS и подписи.
+- **Сравнить с iPhone** — читает приложения на телефоне и показывает, каких покупок на нём нет и что пора обновить; недостающее ставится в пару кликов.
+- **По кабелю и по Wi-Fi** — iPhone/iPad находится и по сети, если в «Apple Devices»/iTunes включена синхронизация по Wi-Fi.
 - **Очередь загрузок** — сколько угодно приложений подряд, прогресс в строке, повтор неудачных; незавершённое продолжается после перезапуска.
 - **Выбор версии** — скачать любую доступную старую версию приложения.
 - **Поиск** — App Store, список популярных приложений и ваш собственный список; App Store ID через запятую.
 - **Файлы IPA** — локальная коллекция: версия, минимальная iOS, тип подписи, установка на устройство.
 - **Несколько Apple ID** — вход с 2FA, переключение между аккаунтами.
-- **Автопроверка обновлений** — при запуске: «Всё готово к работе» или «Доступно обновление ipatool» с установкой в один клик.
+- **Автопроверка обновлений** — при запуске: «Вышла новая IPA PILOTDREDD», «Доступно обновление ipatool» (установка в один клик) или «Всё готово к работе».
 - Тёмная и светлая темы, русский и английский, горячие клавиши.
 
 | | |
@@ -35,7 +37,8 @@ IPA PILOTDREDD основан на консольном [IPA Downloader](https:/
 | История покупок | текстовый список | библиотека с иконками, версиями, размерами и статусами |
 | Снятые с продажи | в общем списке | отдельная вкладка и понятный статус |
 | Загрузки | по одной команде | очередь, прогресс, повтор, продолжение после перезапуска |
-| Установка на iPhone | отдельная команда для папки Apps | «Скачать и установить» из любой строки, проверка iOS и подписи |
+| Установка на iPhone | отдельная команда для папки Apps | «Скачать и установить» из любой строки, проверка iOS и подписи, по кабелю или Wi-Fi |
+| Что стоит на iPhone | — | сравнение с покупками: чего нет на телефоне, что устарело |
 | Обновление ipatool | вручную, новым архивом | проверка при запуске, установка в один клик с проверкой SHA-256 |
 | Журналы | вывод в консоли | журнал с маскировкой email, паролей, кодов 2FA и DSID |
 | Платформы | Windows, macOS, Linux | Windows 10/11 |
@@ -49,7 +52,7 @@ IPA PILOTDREDD основан на консольном [IPA Downloader](https:/
 
 Программа portable: ничего не устанавливает, все данные (скачанные IPA, настройки, журналы) хранятся в её папке.
 
-**Требования:** Windows 10/11 (встроенный PowerShell 5.1, ничего ставить не нужно). Для установки на iPhone — драйвер Apple: приложение «Apple Devices» из Microsoft Store или iTunes.
+**Требования:** Windows 10/11 (встроенный PowerShell 5.1, ничего ставить не нужно). Для установки на iPhone — драйвер Apple: приложение «Apple Devices» из Microsoft Store или iTunes. Для Wi-Fi — один раз подключить телефон кабелем и включить в «Apple Devices»/iTunes «Показывать этот iPhone при подключении к Wi-Fi».
 
 **«Система Windows защитила ваш компьютер»** — у программы нет платной цифровой подписи. Нажмите «Подробнее» → «Выполнить в любом случае». Если exe не запускается, используйте `Start_IPA_Dredd_Windows.bat`.
 
@@ -57,7 +60,7 @@ IPA PILOTDREDD основан на консольном [IPA Downloader](https:/
 
 - Пароль Apple ID нигде не сохраняется. Сессия хранится там же, где у ipatool (`%USERPROFILE%\.ipatool`). Для общих компьютеров есть вход через консоль — пароль не попадает в аргументы процессов.
 - В журналах маскируются email, пароли, коды 2FA, cookie и DSID аккаунта.
-- Программа обращается только к серверам Apple, публичному iTunes Lookup (иконки и версии) и GitHub (компоненты). Телеметрии нет.
+- Программа обращается только к серверам Apple, публичному iTunes Lookup (иконки и версии) и GitHub (компоненты, проверка новых версий). Телеметрии нет. Список приложений с iPhone читается локально и никуда не отправляется и не сохраняется.
 - Не публикуйте свои IPA: внутри файла записан Apple ID покупателя.
 
 Подробнее — [docs/SECURITY.md](docs/SECURITY.md).
@@ -92,4 +95,4 @@ MIT — см. [LICENSE](LICENSE) и [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES
 
 ---
 
-**English.** IPA PILOTDREDD is a Windows app that turns your own Apple ID purchase history into a browsable library with icons and honest statuses, downloads IPAs (any available version) and installs them on a connected iPhone/iPad. Based on [IPA Downloader](https://github.com/kda2495/IPA_Downloader); uses ipatool-cpp and libimobiledevice, which the app downloads on first run from the official IPA Downloader release. Windows 10/11, portable. MIT license.
+**English.** IPA PILOTDREDD is a Windows app that turns your own Apple ID purchase history into a browsable library with icons and honest statuses, downloads IPAs (any available version), installs them on an iPhone/iPad connected by cable or Wi-Fi and shows which purchases are missing on the phone. Based on [IPA Downloader](https://github.com/kda2495/IPA_Downloader); uses ipatool-cpp and libimobiledevice, which the app downloads on first run from the official IPA Downloader release. Windows 10/11, portable. MIT license.

@@ -326,7 +326,32 @@ if ($SelfTest -or $Screenshot) {
             if ($Screenshot) { Show-DreddPage 'Downloads'; Wait-DreddUi 300; Save-DreddScreenshot (Join-Path $Screenshot 'Scenario_Install.png') }
             Remove-Item -LiteralPath $env:FAKE_INSTALL_LOG -ErrorAction SilentlyContinue; $env:FAKE_INSTALL_LOG = $null
             Hide-DreddToast
-        }        # Уведомление о готовности (как после тихой проверки при запуске):
+            # «Сравнить с iPhone»: список приложений устройства (XML с App Store ID) → вкладка «Нет на iPhone».
+            Show-DreddPage 'Purchases'
+            Start-DreddDeviceAppsScan
+            if (-not (& $wait { -not $script:DeviceAppsTask -and $script:DeviceCompare } 30000)) { $errors.Add('scenario: device apps scan failed') }
+            else {
+                $n1 = $script:PurchaseById['1111111']; $n2 = $script:PurchaseById['2222222']
+                if ($n2.DeviceState -ne 'Installed') { $errors.Add("scenario: app with App Store ID on the device is '$($n2.DeviceState)'") }
+                if ($n1.DeviceState -ne 'Missing') { $errors.Add("scenario: app missing on the device is '$($n1.DeviceState)'") }
+                if (-not $script:UI.PurTabNotOnDevice.IsChecked -or $script:UI.PurGrid.Items.Count -ne 1) { $errors.Add("scenario: 'Not on iPhone' tab shows $($script:UI.PurGrid.Items.Count) rows") }
+                if ($script:PurDeviceColumn.Visibility -ne 'Visible') { $errors.Add('scenario: On iPhone column hidden') }
+                if ($Screenshot) { Wait-DreddUi 300; Save-DreddScreenshot (Join-Path $Screenshot 'Scenario_DeviceCompare.png') }
+                Set-DreddDeviceAppInstalled -AppId '1111111' -Udid '00008110-000A1B2C3D4E5F60' -Version '2.5.1'
+                if ($n1.DeviceState -ne 'Installed') { $errors.Add("scenario: installed app still '$($n1.DeviceState)'") }
+                $script:UI.PurTabAll.IsChecked = $true
+            }
+            Hide-DreddToast
+            # Wi-Fi: второе устройство только по сети.
+            $env:FAKE_WIFI_DEVICE = '1'
+            Start-DreddDeviceScan
+            [void](& $wait { -not $script:DeviceScanTask } 20000)
+            $wifi = $script:DeviceRows | Where-Object { $_.Connection -eq 'network' } | Select-Object -First 1
+            if (-not $wifi -or $wifi.ConnectionText -ne (T 'Device.Conn.network') -or $wifi.Name -ne 'Test iPad') { $errors.Add('scenario: Wi-Fi device not shown') }
+            if ($Screenshot) { Show-DreddPage 'Devices'; Wait-DreddUi 300; Save-DreddScreenshot (Join-Path $Screenshot 'Scenario_WiFi.png') }
+            $env:FAKE_WIFI_DEVICE = $null
+        }
+        # Уведомление о готовности (как после тихой проверки при запуске):
         Set-DreddLanguage 'RU'; Show-DreddPage 'Purchases'
         Show-DreddToast -Kind Success -Title (T 'Update.AllGood') -Text (Get-DreddReadyText ([pscustomobject]@{ Current = '4.3.3' }))
         Wait-DreddUi 300

@@ -190,11 +190,14 @@ function Start-DreddNextDownload {
     $task = Start-DreddTask -Name (TF 'Task.Download' @($next.AppName)) -Arguments @{
         AppId = $next.AppId; AppName = $next.AppName; VersionId = $next.VersionId; VersionLabel = $(if ($next.VersionId) { $next.VersionText } else { $null })
         Purchase = $next.Purchase; Account = $account; Dest = $script:Ctx.DownloadDir
+        # Размер из App Store (библиотека покупок) — для проверки свободного места перед загрузкой.
+        Expected = $(if ($script:PurchaseApps -and $script:PurchaseApps[$next.AppId]) { [long]$script:PurchaseApps[$next.AppId].SizeBytes } else { 0L })
     } -Script {
         $r = Invoke-DreddDownload -Context $Context -AppId $A.AppId -AppName $A.AppName -VersionId $A.VersionId -VersionLabel $A.VersionLabel `
-            -Purchase:([bool]$A.Purchase) -Account $A.Account -DestinationFolder $A.Dest -Reporter $Reporter -CancellationToken $Token
+            -Purchase:([bool]$A.Purchase) -Account $A.Account -DestinationFolder $A.Dest -ExpectedBytes ([long]$A.Expected) -Reporter $Reporter -CancellationToken $Token
         # Результат реальной попытки — в библиотеку покупок аккаунта (если приложение там есть).
-        if ($A.Account -and -not $r.Cancelled) {
+        # Нехватка места на диске — не ответ Apple, статус «Не удалось скачать» из-за неё не ставим.
+        if ($A.Account -and -not $r.Cancelled -and -not ($r.Error -and $r.Error.Key -eq 'Err.NoSpace')) {
             try { [void](Set-DreddPurchaseAttempt -Context $Context -Email $A.Account -AppId $A.AppId -ErrorKey $(if ($r.Ok) { '' } else { $r.Error.Key }) -Message $(if ($r.Ok) { '' } else { $r.Error.Message })) } catch { }
         }
         $r

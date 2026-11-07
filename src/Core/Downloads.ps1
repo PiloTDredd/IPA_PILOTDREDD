@@ -65,6 +65,25 @@ function Get-DreddFolderSize {
     return $sum
 }
 
+function Test-DreddFreeSpace {
+    <#
+      Хватит ли места на дисках временной папки и папки загрузок. Нужно: размер из App Store × 1,5 + 200 МБ
+      (сжатый IPA бывает чуть больше заявленного), а если размер неизвестен — 300 МБ. Результат: Ok, Drive, FreeBytes, NeedBytes.
+      Если свободное место узнать нельзя (сетевая папка) — Ok, загрузка не блокируется.
+    #>
+    param([string[]]$Folders, [long]$ExpectedBytes)
+    $need = if ($ExpectedBytes -gt 0) { [long]($ExpectedBytes * 1.5) + 200MB } else { 300MB }
+    foreach ($f in @($Folders | Where-Object { $_ })) {
+        try {
+            $root = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath($f))
+            if (-not $root -or $root.StartsWith('\\')) { continue }
+            $free = (New-Object System.IO.DriveInfo($root)).AvailableFreeSpace
+            if ($free -lt $need) { return [pscustomobject]@{ Ok = $false; Drive = $root.TrimEnd('\'); FreeBytes = $free; NeedBytes = $need } }
+        } catch { }
+    }
+    return [pscustomobject]@{ Ok = $true; Drive = $null; FreeBytes = 0L; NeedBytes = $need }
+}
+
 function Invoke-DreddDownload {
     <#
       Скачивает приложение. Результат: Ok, Path, Metadata, Error{Key,Message}, Cancelled.
@@ -79,12 +98,19 @@ function Invoke-DreddDownload {
         [switch]$Purchase,
         [string]$Account,
         [string]$DestinationFolder,
+        [long]$ExpectedBytes,
         $Reporter,
         $CancellationToken
     )
     if ($AppId -notmatch '^\d+$') { return [pscustomobject]@{ Ok = $false; Path = $null; Metadata = $null; Cancelled = $false; Error = [pscustomobject]@{ Key = 'Err.InvalidId'; Message = $AppId } } }
     if (-not $DestinationFolder) { $DestinationFolder = $Context.DownloadDir }
     if (-not [System.IO.Directory]::Exists($DestinationFolder)) { [void][System.IO.Directory]::CreateDirectory($DestinationFolder) }
+    $space = Test-DreddFreeSpace -Folders @($Context.TempRoot, $DestinationFolder) -ExpectedBytes $ExpectedBytes
+    if (-not $space.Ok) {
+        $msg = '{0}: {1:N0} MB < {2:N0} MB' -f $space.Drive, ($space.FreeBytes / 1MB), ($space.NeedBytes / 1MB)
+        Write-DreddReport -Reporter $Reporter -Type log -Level Error -Area 'Download' -Message ("✖ {0}: {1}" -f $(if ($AppName) { $AppName } else { $AppId }), $msg)
+        return [pscustomobject]@{ Ok = $false; Path = $null; Metadata = $null; Cancelled = $false; Error = [pscustomobject]@{ Key = 'Err.NoSpace'; Message = $msg } }
+    }
 
     $temp = Join-Path $Context.TempRoot ([guid]::NewGuid().ToString('N'))
     [void][System.IO.Directory]::CreateDirectory($temp)
