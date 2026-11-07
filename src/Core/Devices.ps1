@@ -1,4 +1,6 @@
-﻿# Устройства iPhone/iPad по USB: idevice_id, ideviceinfo, ideviceinstaller (поведение 4.2 + модель и статус).
+﻿# Устройства iPhone/iPad по кабелю и по Wi-Fi: idevice_id, ideviceinfo, ideviceinstaller (поведение 4.2 + модель, статус, подключение).
+# Wi-Fi (-n) работает только для устройства, которое уже сопряжено с этим ПК по кабелю и у которого включена
+# синхронизация по Wi-Fi («Apple Devices»/iTunes → «Показывать этот iPhone при подключении к Wi-Fi»).
 
 function ConvertTo-DreddIosVersion {
     param([string]$Text)
@@ -28,9 +30,16 @@ function Get-DreddDeviceToolEnv {
     return @{ PATH = ($root + [System.IO.Path]::PathSeparator + [Environment]::GetEnvironmentVariable('PATH')) }
 }
 
+function ConvertFrom-DreddUdidList {
+    # Вывод idevice_id -l / -n → список UDID. Строка может быть «UDID» или «UDID (USB|Network)».
+    param([string]$Text)
+    return @($Text -split "`r?`n" | ForEach-Object { ($_.Trim() -split '\s+')[0] } | Where-Object { $_ -match '^[0-9A-Fa-f-]{20,}$' } | Select-Object -Unique)
+}
+
 function Get-DreddDevices {
     <#
-      Список подключённых устройств: UDID, Name, ProductType, iOSVersion, Status (Ready | NotTrusted | Error), Detail.
+      Список подключённых устройств: UDID, Name, ProductType, iOSVersion, Status (Ready | NotTrusted | Error), Detail,
+      Connection (usb | network). Ищет по кабелю (idevice_id -l) и по сети (idevice_id -n); устройство, видимое и так и так, — usb.
       Возвращает объект: Ok, Devices, ErrorKey, Message.
     #>
     param([Parameter(Mandatory)]$Context, $Reporter, $CancellationToken)
@@ -41,8 +50,13 @@ function Get-DreddDevices {
     $env1 = Get-DreddDeviceToolEnv $Context
     $list = Invoke-DreddProcess -FilePath $b.IdeviceId -ArgumentList @('-l') -TimeoutSec 20 -CancellationToken $CancellationToken -Environment $env1
     if ($list.Cancelled) { return [pscustomobject]@{ Ok = $false; Devices = @(); ErrorKey = 'Err.Cancelled'; Message = '' } }
-    $udids = @($list.StdOut -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^[0-9A-Fa-f-]{20,}$' } | Select-Object -Unique)
-    if ($list.ExitCode -ne 0 -and $udids.Count -eq 0) {
+    $usb = ConvertFrom-DreddUdidList $list.StdOut
+    $net = @()
+    $netList = Invoke-DreddProcess -FilePath $b.IdeviceId -ArgumentList @('-n') -TimeoutSec 20 -CancellationToken $CancellationToken -Environment $env1
+    if ($netList.Cancelled) { return [pscustomobject]@{ Ok = $false; Devices = @(); ErrorKey = 'Err.Cancelled'; Message = '' } }
+    if ($netList.ExitCode -eq 0) { $net = @(ConvertFrom-DreddUdidList $netList.StdOut | Where-Object { $usb -notcontains $_ }) }
+    Write-DreddReport -Reporter $Reporter -Type log -Level Debug -Area 'Devices' -Message ("USB: {0}, Wi-Fi: {1}" -f $usb.Count, $net.Count)
+    if ($list.ExitCode -ne 0 -and $usb.Count -eq 0 -and $net.Count -eq 0) {
         $msg = (Protect-LogText $list.Output).Trim()
         Write-DreddReport -Reporter $Reporter -Type log -Level Warning -Area 'Devices' -Message ("idevice_id: exit {0} {1}" -f $list.ExitCode, $msg)
         # usbmuxd/драйвер Apple недоступен — отличаем от «нет устройств», если есть понятный текст.
@@ -51,13 +65,19 @@ function Get-DreddDevices {
         return [pscustomobject]@{ Ok = $false; Devices = @(); ErrorKey = $key; Message = $msg }
     }
 
-    $devices = foreach ($udid in $udids) {
+    $found = @($usb | ForEach-Object { @{ Udid = $_; Conn = 'usb' } }) + @($net | ForEach-Object { @{ Udid = $_; Conn = 'network' } })
+    $devices = foreach ($f in $found) {
         if ($null -ne $CancellationToken -and $CancellationToken.IsCancellationRequested) { break }
-        $d = [ordered]@{ UDID = $udid; Name = $null; ProductType = $null; iOSVersion = $null; DeviceClass = $null; Status = 'Ready'; Detail = '' }
-        $n = Invoke-DreddProcess -FilePath $b.IdeviceId -ArgumentList @($udid) -TimeoutSec 15 -CancellationToken $CancellationToken -Environment $env1
-        if ($n.ExitCode -eq 0) { $d.Name = ($n.StdOut.Trim() -split "`r?`n" | Select-Object -First 1) }
+        $udid = $f.Udid
+        $netArg = @(if ($f.Conn -eq 'network') { '-n' })
+        $d = [ordered]@{ UDID = $udid; Name = $null; ProductType = $null; iOSVersion = $null; DeviceClass = $null; Status = 'Ready'; Detail = ''; Connection = $f.Conn }
+        if ($f.Conn -eq 'usb') {
+            # Имя по сети даёт ideviceinfo (DeviceName), отдельный запрос idevice_id не нужен.
+            $n = Invoke-DreddProcess -FilePath $b.IdeviceId -ArgumentList @($udid) -TimeoutSec 15 -CancellationToken $CancellationToken -Environment $env1
+            if ($n.ExitCode -eq 0) { $d.Name = ($n.StdOut.Trim() -split "`r?`n" | Select-Object -First 1) }
+        }
         if ($b.IdeviceInfo) {
-            $i = Invoke-DreddProcess -FilePath $b.IdeviceInfo -ArgumentList @('-u', $udid) -TimeoutSec 20 -CancellationToken $CancellationToken -Environment $env1
+            $i = Invoke-DreddProcess -FilePath $b.IdeviceInfo -ArgumentList ($netArg + @('-u', $udid)) -TimeoutSec 20 -CancellationToken $CancellationToken -Environment $env1
             if ($i.ExitCode -eq 0) {
                 foreach ($line in ($i.StdOut -split "`r?`n")) {
                     if ($line -match '^(\w+):\s*(.*)$') {
@@ -113,8 +133,11 @@ function Install-DreddIpa {
     try {
         [System.IO.File]::Copy($IpaPath, $tmpIpa, $true)
         $r = $null
-        # Две попытки: iPad/iPhone мог на секунду пропасть из usbmuxd (блокировка, переподключение USB-C, хаб).
-        for ($attempt = 1; $attempt -le 2; $attempt++) {
+        $conn = $null
+        # До трёх попыток: iPad/iPhone мог на время пропасть из usbmuxd (блокировка, переподключение USB-C, хаб),
+        # а по Wi-Fi заблокированный iPhone «засыпает» и lockdownd не отвечает («Mux error»).
+        $maxAttempts = 3
+        for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             $baseArgs = @()
             if ($UDID) {
                 # Где устройство сейчас: по кабелю (-l) или по сети (-n). Ждём до ~10 с, пока оно появится.
@@ -128,14 +151,19 @@ function Install-DreddIpa {
             }
             $r = Invoke-DreddProcess -FilePath $inst -ArgumentList ($baseArgs + @('install', $tmpIpa)) -TimeoutSec 900 -CancellationToken $CancellationToken -OnLine $onLine -Environment $env1
             if ($r.Cancelled) { return [pscustomobject]@{ Ok = $false; ErrorKey = 'Err.Cancelled'; Message = ''; Output = $r.Output } }
-            if ($r.ExitCode -ne 0 -and $r.Output -notmatch '(?i)No device found') {
+            # Нет связи с устройством — upgrade не поможет, сразу к повтору.
+            if ($r.ExitCode -ne 0 -and $r.Output -notmatch $script:ReDeviceConnError) {
                 Write-DreddReport -Reporter $Reporter -Type log -Level Info -Area 'Install' -Message 'install → upgrade'
                 $r = Invoke-DreddProcess -FilePath $inst -ArgumentList ($baseArgs + @('upgrade', $tmpIpa)) -TimeoutSec 900 -CancellationToken $CancellationToken -OnLine $onLine -Environment $env1
                 if ($r.Cancelled) { return [pscustomobject]@{ Ok = $false; ErrorKey = 'Err.Cancelled'; Message = ''; Output = $r.Output } }
             }
-            if ($attempt -eq 1 -and $r.Output -match '(?i)No device found') {
-                Write-DreddReport -Reporter $Reporter -Type log -Level Warning -Area 'Install' -Message 'device not found, retrying'
-                Start-Sleep -Seconds 3
+            if ($attempt -lt $maxAttempts -and $r.Output -match $script:ReDeviceConnError) {
+                Write-DreddReport -Reporter $Reporter -Type log -Level Warning -Area 'Install' -Message ("device not responding ({0}), retry {1}/{2}" -f $conn, $attempt, ($maxAttempts - 1))
+                if ($conn -eq 'network') { Write-DreddReport -Reporter $Reporter -Type status -Area 'Install' -Message 'wifiwait' }
+                for ($w = 0; $w -lt (3 * $attempt); $w++) {
+                    if ($null -ne $CancellationToken -and $CancellationToken.IsCancellationRequested) { return [pscustomobject]@{ Ok = $false; ErrorKey = 'Err.Cancelled'; Message = ''; Output = '' } }
+                    Start-Sleep -Seconds 1
+                }
                 continue
             }
             break
@@ -147,13 +175,31 @@ function Install-DreddIpa {
         }
         $msg = (Protect-LogText $r.Output).Trim()
         $lastLine = @($msg -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -Last 1)
-        $key = 'Err.InstallFailed'
-        if ($msg -match '(?i)(pair|trust|lockdown)') { $key = 'Err.NotTrusted' }
-        elseif ($msg -match '(?i)(No device found|device not found)') { $key = 'Err.DeviceGone' }
+        $key = Get-DreddDeviceErrorKey -Text $msg -Connection $conn
+        if (-not $key) { $key = 'Err.InstallFailed' }
         return [pscustomobject]@{ Ok = $false; ErrorKey = $key; Message = ($lastLine -join ''); Output = $msg }
     } finally {
         try { if ([System.IO.Directory]::Exists($temp)) { [System.IO.Directory]::Delete($temp, $true) } } catch { }
     }
+}
+
+# Нет связи с устройством (а не отказ установки): пропало из usbmuxd или по Wi-Fi не отвечает lockdownd.
+$script:ReDeviceConnError = '(?i)(No device found|device not found|Mux error)'
+
+function Get-DreddDeviceErrorKey {
+    <#
+      Ключ ошибки по выводу libimobiledevice с учётом подключения ($null — не ошибка связи/доверия):
+        «Mux error» по Wi-Fi — iPhone заблокирован/уснул или вне сети (Err.WifiUnreachable), а не «нет доверия»;
+        pair/trust/password protected/invalid host — Err.NotTrusted; устройство пропало — Err.DeviceGone.
+    #>
+    param([string]$Text, [string]$Connection)
+    if ($Text -match '(?i)(pairing|not paired|trust|password protected|invalid host|user denied)') { return 'Err.NotTrusted' }
+    if ($Text -match $script:ReDeviceConnError -or $Text -match '(?i)Could not connect to lockdownd') {
+        if ($Connection -eq 'network') { return 'Err.WifiUnreachable' }
+        if ($Text -match '(?i)(No device found|device not found|Mux error)') { return 'Err.DeviceGone' }
+        return 'Err.NotTrusted'
+    }
+    return $null
 }
 
 function Get-DreddDeviceConnection {
@@ -180,4 +226,156 @@ function Wait-DreddDeviceConnection {
         Start-Sleep -Seconds 2
     } while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec)
     return $null
+}
+
+# ---------------- Приложения на устройстве ----------------
+
+function ConvertFrom-DreddDeviceAppsXml {
+    # XML-вывод «ideviceinstaller list --xml» → записи BundleId, Version, Build, Name, ItemId.
+    # $null, если это не plist-массив; иначе массив (возможно, пустой — на устройстве нет приложений) одним объектом.
+    param([string]$Text)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $null }
+    $start = $Text.IndexOf('<?xml')
+    if ($start -lt 0) { $start = $Text.IndexOf('<plist') }
+    if ($start -lt 0) { return $null }
+    $end = $Text.LastIndexOf('</plist>')
+    if ($end -lt $start) { return $null }
+    $xml = $Text.Substring($start, $end - $start + 8)
+    try { $root = [IPADredd.PlistReader]::Parse([System.Text.Encoding]::UTF8.GetBytes($xml)) } catch { return $null }
+    if (-not ($root -is [System.Collections.IList])) { return $null }
+    $apps = foreach ($d in $root) {
+        $bid = [IPADredd.PlistReader]::GetString($d, 'CFBundleIdentifier')
+        if (-not $bid) { continue }
+        $name = [IPADredd.PlistReader]::GetString($d, 'CFBundleDisplayName')
+        if (-not $name) { $name = [IPADredd.PlistReader]::GetString($d, 'CFBundleName') }
+        $itemId = $null
+        # iTunesMetadata (data) — plist App Store с itemId: по нему сопоставляем даже без bundle id из Lookup.
+        $meta = $null
+        if ($d -is [System.Collections.IDictionary] -and ([System.Collections.IDictionary]$d).Contains('iTunesMetadata')) { $meta = $d['iTunesMetadata'] }
+        if ($meta -is [byte[]] -and $meta.Length -gt 8) {
+            try { $itemId = [IPADredd.PlistReader]::GetString([IPADredd.PlistReader]::Parse($meta), 'itemId') } catch { $itemId = $null }
+        }
+        [pscustomobject]@{
+            BundleId = $bid; Name = [string]$name
+            Version = [string][IPADredd.PlistReader]::GetString($d, 'CFBundleShortVersionString')
+            Build = [string][IPADredd.PlistReader]::GetString($d, 'CFBundleVersion')
+            ItemId = $(if ($itemId -match '^\d+$') { $itemId } else { $null })
+        }
+    }
+    $list = @($apps | Where-Object { $_ })
+    return , $list
+}
+
+function ConvertFrom-DreddDeviceAppsText {
+    <#
+      Текстовый вывод «ideviceinstaller list» → записи. Понимает оба формата:
+        1.1.1+:  CFBundleIdentifier, CFBundleShortVersionString, CFBundleDisplayName   (заголовок)
+                 com.example.app, "1.2.3", "Example"
+        1.1.0:   Total: N apps
+                 com.example.app - Example 1.2.3
+    #>
+    param([string]$Text)
+    $apps = foreach ($line in ($Text -split "`r?`n")) {
+        $l = $line.Trim()
+        if (-not $l -or $l -match '^(CFBundleIdentifier|Total:)') { continue }
+        if ($l -match '^([A-Za-z0-9][A-Za-z0-9._-]*),\s*"([^"]*)"(?:,\s*"(.*)")?$') {
+            [pscustomobject]@{ BundleId = $Matches[1]; Version = $Matches[2]; Build = ''; Name = [string]$Matches[3]; ItemId = $null }
+        } elseif ($l -match '^([A-Za-z0-9][A-Za-z0-9._-]*)\s+-\s+(.*?)\s+(\S+)$') {
+            [pscustomobject]@{ BundleId = $Matches[1]; Version = $Matches[3]; Build = ''; Name = $Matches[2]; ItemId = $null }
+        }
+    }
+    return $apps
+}
+
+function Get-DreddDeviceApps {
+    <#
+      Пользовательские приложения на устройстве (ideviceinstaller list --user). Результат: Ok, Apps, Format, ErrorKey, Message.
+      Форматы вывода разных сборок ideviceinstaller различаются, поэтому три попытки:
+        1) XML + iTunesMetadata (App Store ID); 2) XML без него; 3) текст.
+      Если ни одна не разобралась — Ok = $false и начало вывода в журнале (без личных данных).
+    #>
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Udid, [string]$Connection, $Reporter, $CancellationToken)
+    $inst = $Context.Binaries.IdeviceInstaller
+    if (-not $inst) { return [pscustomobject]@{ Ok = $false; Apps = @(); Format = $null; ErrorKey = 'Err.NoInstaller'; Message = '' } }
+    if (-not $Connection) { $Connection = Get-DreddDeviceConnection -Context $Context -Udid $Udid -CancellationToken $CancellationToken }
+    if (-not $Connection) { return [pscustomobject]@{ Ok = $false; Apps = @(); Format = $null; ErrorKey = 'Err.DeviceGone'; Message = '' } }
+    $base = @('-u', $Udid)
+    if ($Connection -eq 'network') { $base += '-n' }
+    $attrs = @('-a', 'CFBundleIdentifier', '-a', 'CFBundleShortVersionString', '-a', 'CFBundleVersion', '-a', 'CFBundleDisplayName', '-a', 'CFBundleName')
+    $tries = @(
+        @{ Format = 'xml+meta'; Args = (@('list', '--user', '--xml') + $attrs + @('-a', 'iTunesMetadata')) },
+        @{ Format = 'xml'; Args = (@('list', '--user', '--xml') + $attrs) },
+        @{ Format = 'text'; Args = @('list', '--user') }
+    )
+    $env1 = Get-DreddDeviceToolEnv $Context
+    $last = $null
+    foreach ($t in $tries) {
+        $r = Invoke-DreddProcess -FilePath $inst -ArgumentList ($base + $t.Args) -TimeoutSec 180 -CancellationToken $CancellationToken -Environment $env1
+        $last = $r
+        if ($r.Cancelled) { return [pscustomobject]@{ Ok = $false; Apps = @(); Format = $null; ErrorKey = 'Err.Cancelled'; Message = '' } }
+        if ($r.ExitCode -ne 0 -or $r.Output -match $script:ReDeviceConnError) {
+            $ek = Get-DreddDeviceErrorKey -Text $r.Output -Connection $Connection
+            if ($ek) { return [pscustomobject]@{ Ok = $false; Apps = @(); Format = $null; ErrorKey = $ek; Message = (Protect-LogText $r.Output).Trim() } }
+        }
+        $apps = $null
+        if ($r.ExitCode -eq 0) {
+            if ($t.Format -eq 'text') {
+                $apps = @(ConvertFrom-DreddDeviceAppsText $r.StdOut)
+                # Пустой текстовый список при непустом выводе — формат не распознан, а не «ничего не установлено».
+                if ($apps.Count -eq 0 -and @($r.StdOut -split "`r?`n" | Where-Object { $_.Trim() -and $_ -notmatch '^\s*(CFBundleIdentifier|Total:)' }).Count -gt 0) { $apps = $null }
+            } else { $apps = ConvertFrom-DreddDeviceAppsXml $r.StdOut }
+        }
+        if ($null -ne $apps) {
+            $apps = @($apps)
+            Write-DreddReport -Reporter $Reporter -Type log -Level Info -Area 'Devices' -Message ("ideviceinstaller list: {0} apps ({1})" -f $apps.Count, $t.Format)
+            return [pscustomobject]@{ Ok = $true; Apps = $apps; Format = $t.Format; ErrorKey = $null; Message = '' }
+        }
+        $head = Protect-LogText $r.Output
+        if ($head.Length -gt 300) { $head = $head.Substring(0, 300) + '…' }
+        Write-DreddReport -Reporter $Reporter -Type log -Level Debug -Area 'Devices' -Message ("ideviceinstaller list ({0}): exit {1}, not parsed: {2}" -f $t.Format, $r.ExitCode, $head)
+    }
+    $msg = (Protect-LogText $last.Output).Trim()
+    if ($msg.Length -gt 300) { $msg = $msg.Substring(0, 300) + '…' }
+    Write-DreddReport -Reporter $Reporter -Type log -Level Warning -Area 'Devices' -Message ("ideviceinstaller list: output not recognized: {0}" -f $msg)
+    return [pscustomobject]@{ Ok = $false; Apps = @(); Format = $null; ErrorKey = 'Err.DeviceAppsFormat'; Message = $msg }
+}
+
+function Compare-DreddDeviceApps {
+    <#
+      Сопоставляет покупки с приложениями на устройстве. Возвращает hashtable App Store ID → { State; DeviceVersion }.
+        Installed — стоит на устройстве;  Outdated — стоит, но в App Store версия новее;
+        Missing   — на устройстве нет;    Unknown  — сопоставить нельзя (нет bundle id: снято с продажи и не скачано).
+      Сопоставление: App Store ID из iTunesMetadata устройства, иначе bundle id (из Lookup или из скачанного IPA — -LocalBundles: ID → bundle id).
+    #>
+    param([object[]]$Apps, [object[]]$DeviceApps, [hashtable]$LocalBundles = @{})
+    $byItem = @{}; $byBundle = @{}
+    $hasItemIds = $false
+    foreach ($d in @($DeviceApps)) {
+        if (-not $d) { continue }
+        if ($d.ItemId) {
+            $byItem[[string]$d.ItemId] = $d
+            # Synthetic — запись, добавленная программой после установки, а не полученная от устройства.
+            if (-not ($d.PSObject.Properties['Synthetic'] -and $d.Synthetic)) { $hasItemIds = $true }
+        }
+        if ($d.BundleId) { $byBundle[$d.BundleId.ToLowerInvariant()] = $d }
+    }
+    # Если устройство отдало App Store ID, отсутствие ID среди них означает «не установлено» и без bundle id.
+    $res = @{}
+    foreach ($a in @($Apps)) {
+        if (-not $a -or -not $a.Id) { continue }
+        $id = [string]$a.Id
+        $dev = $byItem[$id]
+        $bundle = if ($a.BundleId) { [string]$a.BundleId } elseif ($LocalBundles.ContainsKey($id)) { [string]$LocalBundles[$id] } else { '' }
+        if (-not $dev -and $bundle) { $dev = $byBundle[$bundle.ToLowerInvariant()] }
+        if ($dev) {
+            $state = 'Installed'
+            if ($a.Lookup -eq 'Found' -and (Compare-DreddVersion $dev.Version $a.Version) -eq -1) { $state = 'Outdated' }
+            $res[$id] = [pscustomobject]@{ State = $state; DeviceVersion = [string]$dev.Version }
+        } elseif ($bundle -or $hasItemIds) {
+            $res[$id] = [pscustomobject]@{ State = 'Missing'; DeviceVersion = '' }
+        } else {
+            $res[$id] = [pscustomobject]@{ State = 'Unknown'; DeviceVersion = '' }
+        }
+    }
+    return $res
 }

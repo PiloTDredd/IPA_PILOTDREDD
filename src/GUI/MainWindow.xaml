@@ -131,11 +131,15 @@
               <ColumnDefinition Width="*"/>
               <ColumnDefinition Width="Auto"/>
               <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
             <TextBox x:Name="PurSearch" Tag="@Purchases.Placeholder"/>
-            <TextBlock x:Name="PurScanInfo" Grid.Column="1" Style="{StaticResource Muted}" FontSize="12" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="12,0,12,0"/>
+            <TextBlock x:Name="PurScanInfo" Grid.Column="1" Style="{StaticResource Muted}" FontSize="12" VerticalAlignment="Center" HorizontalAlignment="Right" TextAlignment="Right" Margin="12,0,12,0"/>
             <Button x:Name="PurCancelBtn" Grid.Column="2" x:Uid="Common.Cancel" Margin="0,0,8,0" Visibility="Collapsed"/>
-            <Button x:Name="PurScanBtn" Grid.Column="3" Style="{StaticResource PrimaryButton}" ToolTip="@Purchases.ScanHint">
+            <Button x:Name="PurDeviceBtn" Grid.Column="3" Margin="0,0,8,0" ToolTip="@Purchases.DeviceScanHint">
+              <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE8EA;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" VerticalAlignment="Center"/><TextBlock x:Uid="Purchases.DeviceScan" Margin="8,0,0,0"/></StackPanel>
+            </Button>
+            <Button x:Name="PurScanBtn" Grid.Column="4" Style="{StaticResource PrimaryButton}" ToolTip="@Purchases.ScanHint">
               <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE72C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Foreground="{DynamicResource Brush.AccentText}" VerticalAlignment="Center"/><TextBlock x:Uid="Purchases.Scan" Margin="8,0,0,0" Foreground="{DynamicResource Brush.AccentText}"/></StackPanel>
             </Button>
           </Grid>
@@ -146,6 +150,9 @@
             <RadioButton x:Name="PurTabUpdates" Style="{StaticResource FilterTab}" GroupName="PurTab"/>
             <RadioButton x:Name="PurTabMissing" Style="{StaticResource FilterTab}" GroupName="PurTab"/>
             <RadioButton x:Name="PurTabProblems" Style="{StaticResource FilterTab}" GroupName="PurTab"/>
+            <RadioButton x:Name="PurTabNotOnDevice" Style="{StaticResource FilterTab}" GroupName="PurTab"/>
+            <RadioButton x:Name="PurTabOnDevice" Style="{StaticResource FilterTab}" GroupName="PurTab"/>
+            <RadioButton x:Name="PurTabDeviceOutdated" Style="{StaticResource FilterTab}" GroupName="PurTab"/>
           </WrapPanel>
           <Border Grid.Row="2" Style="{StaticResource Card}" Padding="4">
             <Grid>
@@ -185,6 +192,13 @@
                   <DataGridTextColumn Header="@Col.Version" Binding="{Binding VersionText}" Width="110"/>
                   <DataGridTextColumn Header="@Col.PurchaseDate" Binding="{Binding PurchaseDateText}" SortMemberPath="SortDate" Width="100"/>
                   <DataGridTextColumn Header="@Col.Size" Binding="{Binding SizeText}" SortMemberPath="SizeBytes" Width="84"/>
+                  <DataGridTemplateColumn Header="@Col.OnDevice" Width="120" SortMemberPath="DeviceOrder" Visibility="Collapsed">
+                    <DataGridTemplateColumn.CellTemplate>
+                      <DataTemplate>
+                        <TextBlock Text="{Binding DeviceText}" ToolTip="{Binding DeviceDetail}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                      </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                  </DataGridTemplateColumn>
                   <DataGridTemplateColumn Header="@Col.Status" Width="190" SortMemberPath="StatusOrder">
                     <DataGridTemplateColumn.CellTemplate>
                       <DataTemplate>
@@ -531,6 +545,7 @@
                   <DataGridTextColumn Header="@Col.DeviceName" Binding="{Binding Name}" Width="*"/>
                   <DataGridTextColumn Header="@Col.Model" Binding="{Binding Model}" Width="120"/>
                   <DataGridTextColumn Header="@Col.Ios" Binding="{Binding IosVersion}" Width="80"/>
+                  <DataGridTextColumn Header="@Col.Connection" Binding="{Binding ConnectionText}" Width="110"/>
                   <DataGridTextColumn Header="@Col.Udid" Binding="{Binding ShortUdid}" Width="160"/>
                   <DataGridTemplateColumn Header="@Col.Status" Width="160">
                     <DataGridTemplateColumn.CellTemplate><DataTemplate><TextBlock Text="{Binding StatusText}" Style="{StaticResource StatusText}" ToolTip="{Binding Detail}"/></DataTemplate></DataGridTemplateColumn.CellTemplate>

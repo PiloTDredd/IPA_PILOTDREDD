@@ -72,6 +72,9 @@ function Resolve-DreddToolError {
 
     $key = 'Err.Unknown'
     if ($script:ReAuthCode.IsMatch($clean)) { $key = 'Err.AuthCode' }
+    # Ноябрь 2026: Apple изменила вход — ipatool-cpp 4.3.3 отвечает «status=301/204/403/404/500/503» или «redirect with no location header»
+    # (kda2495/IPA_Downloader#29, majd/ipatool#642). Это не неверный пароль: нужен новый ipatool, сохранённые сессии продолжают работать.
+    elseif ($clean -match '(?i)login error.*(status=(301|302|204|403|404|500|503)\b|redirect with no location)') { $key = 'Err.AppleLoginChanged' }
     elseif ($clean -match '(?i)(decrypt|passphrase|keychain)') { $key = 'Err.Passphrase' }
     elseif ($clean -match '(?i)(not logged in|no (saved )?account|login required|please (log|sign) ?in|unauthori[sz]ed|token.*expired|session.*expired)') { $key = 'Err.NotLoggedIn' }
     elseif ($clean -match '(?i)(badlogin|incorrect|invalid (credentials|password|apple id)|wrong password|password.*(invalid|incorrect))') { $key = 'Err.BadCredentials' }

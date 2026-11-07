@@ -247,31 +247,60 @@ function Get-DreddPurchaseStatus {
 
 function Save-DreddIcons {
     # Скачивает недостающие иконки (Files/Cache/Icons/<ID>.jpg). Сообщение data { Id; Path } на каждую иконку.
-    param([Parameter(Mandatory)]$Context, [object[]]$Apps, $Reporter, $CancellationToken)
+    param([Parameter(Mandatory)]$Context, [object[]]$Apps, $Reporter, $CancellationToken, [ValidateRange(1, 16)][int]$Parallel = 6)
     $dir = Get-DreddIconFolder $Context
     if (-not [System.IO.Directory]::Exists($dir)) { [void][System.IO.Directory]::CreateDirectory($dir) }
     try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
-    $wc = New-Object System.Net.WebClient
-    $wc.Headers['User-Agent'] = "IPA-PilotDredd/$script:DreddVersion"
+    # По умолчанию .NET Framework держит 2 соединения на хост — для параллельной загрузки нужно больше.
+    try { if ([Net.ServicePointManager]::DefaultConnectionLimit -lt 8) { [Net.ServicePointManager]::DefaultConnectionLimit = 8 } } catch { }
+    $jobs = New-Object System.Collections.Generic.Queue[object]
+    foreach ($a in @($Apps)) {
+        if ($a.Id -notmatch '^\d+$' -or $a.ArtworkUrl -notmatch '^https://[\w.-]+\.mzstatic\.com/') { continue }
+        $path = Join-Path $dir "$($a.Id).jpg"
+        if ([System.IO.File]::Exists($path)) { continue }
+        # Иконка 64×64 вместо 100×100: в списке она 32 px (×2 для высокого DPI).
+        $jobs.Enqueue(@{ Id = $a.Id; Path = $path; Url = ($a.ArtworkUrl -replace '/\d+x\d+bb\.(jpg|png)$', '/64x64bb.jpg') })
+    }
+    # До $Parallel загрузок одновременно (асинхронные WebClient, без дополнительных потоков PowerShell).
+    $active = New-Object System.Collections.Generic.List[object]
     $n = 0
+    $finish = {
+        param($j)
+        $ok = $false
+        try { $j.Task.Wait(); $ok = -not $j.Task.IsFaulted -and -not $j.Task.IsCanceled } catch { $ok = $false }
+        try { $j.Client.Dispose() } catch { }
+        if ($ok -and [System.IO.File]::Exists($j.Tmp)) {
+            try { [System.IO.File]::Move($j.Tmp, $j.Path); return $true } catch { }
+        }
+        try { if ([System.IO.File]::Exists($j.Tmp)) { [System.IO.File]::Delete($j.Tmp) } } catch { }
+        return $false
+    }
     try {
-        foreach ($a in @($Apps)) {
-            if ($null -ne $CancellationToken -and $CancellationToken.IsCancellationRequested) { break }
-            if ($a.Id -notmatch '^\d+$' -or $a.ArtworkUrl -notmatch '^https://[\w.-]+\.mzstatic\.com/') { continue }
-            $path = Join-Path $dir "$($a.Id).jpg"
-            if ([System.IO.File]::Exists($path)) { continue }
-            # Иконка 64×64 вместо 100×100: в списке она 32 px (×2 для высокого DPI).
-            $url = $a.ArtworkUrl -replace '/\d+x\d+bb\.(jpg|png)$', '/64x64bb.jpg'
-            try {
-                $tmp = "$path.part"
-                $wc.DownloadFile($url, $tmp)
-                [System.IO.File]::Move($tmp, $path)
+        while ($jobs.Count -gt 0 -or $active.Count -gt 0) {
+            $cancel = $null -ne $CancellationToken -and $CancellationToken.IsCancellationRequested
+            while (-not $cancel -and $jobs.Count -gt 0 -and $active.Count -lt $Parallel) {
+                $j = $jobs.Dequeue()
+                $wc = New-Object System.Net.WebClient
+                $wc.Headers['User-Agent'] = "IPA-PilotDredd/$script:DreddVersion"
+                $j.Tmp = "$($j.Path).part"
+                $j.Client = $wc
+                $j.Task = $wc.DownloadFileTaskAsync([uri]$j.Url, $j.Tmp)
+                $active.Add($j)
+            }
+            if ($cancel) { foreach ($j in $active) { try { $j.Client.CancelAsync() } catch { } }; $jobs.Clear() }
+            if ($active.Count -eq 0) { break }
+            $tasks = [System.Threading.Tasks.Task[]]@($active | ForEach-Object { $_.Task })
+            $i = [System.Threading.Tasks.Task]::WaitAny($tasks, 500)
+            if ($i -lt 0) { continue }
+            $j = $active[$i]
+            $active.RemoveAt($i)
+            if (& $finish $j) {
                 $n++
-                Write-DreddReport -Reporter $Reporter -Type data -Area 'Icons' -Value @{ Id = $a.Id; Path = $path }
-            } catch {
-                try { if ([System.IO.File]::Exists("$path.part")) { [System.IO.File]::Delete("$path.part") } } catch { }
+                Write-DreddReport -Reporter $Reporter -Type data -Area 'Icons' -Value @{ Id = $j.Id; Path = $j.Path }
             }
         }
-    } finally { $wc.Dispose() }
+    } finally {
+        foreach ($j in $active) { try { $j.Client.CancelAsync() } catch { }; [void](& $finish $j) }
+    }
     return $n
 }

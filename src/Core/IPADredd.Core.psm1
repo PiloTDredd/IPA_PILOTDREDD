@@ -63,15 +63,16 @@ Export-ModuleMember -Function @(
     # Library
     'Get-DreddIpaMetadata', 'Get-DreddLibrary', 'Get-DreddSignatureInfo', 'Test-DreddSignatureForDevice', 'Import-DreddIpaToLibrary', 'Get-DreddIpaFileName', 'Get-DreddUniquePath', 'ConvertTo-DreddSafeFileName',
     # Downloads
-    'Invoke-DreddDownload', 'Get-DreddProgressFromLine', 'Save-DreddQueue', 'Read-DreddQueue',
+    'Invoke-DreddDownload', 'Get-DreddProgressFromLine', 'Save-DreddQueue', 'Read-DreddQueue', 'Test-DreddFreeSpace',
     # Devices
     'Get-DreddDevices', 'Install-DreddIpa', 'ConvertTo-DreddIosVersion', 'Test-DreddIosCompatible',
+    'Get-DreddDeviceApps', 'Get-DreddDeviceErrorKey', 'Compare-DreddDeviceApps', 'ConvertFrom-DreddDeviceAppsXml', 'ConvertFrom-DreddDeviceAppsText', 'ConvertFrom-DreddUdidList',
     # Diagnostics
     'Get-DreddEnvironment', 'Get-DreddDiagnostics', 'New-DreddDiagnosticReport', 'Export-DreddDiagnosticReport',
     # Remote
     'Update-DreddRemoteLists', 'Get-DreddLatestRelease', 'Test-DreddAppsListContent',
     # Updates
-    'Get-DreddToolVersion', 'Test-DreddToolUpdate', 'Install-DreddToolUpdate', 'Test-DreddNeedsSetup',
+    'Get-DreddToolVersion', 'Test-DreddToolUpdate', 'Install-DreddToolUpdate', 'Test-DreddNeedsSetup', 'Test-DreddAppUpdate',
     # Localization
     'Get-DreddStrings', 'Get-DreddLanguages'
 )

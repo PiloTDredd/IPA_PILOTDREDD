@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+	<dict>
+		<key>CFBundleDisplayName</key>
+		<string>New App</string>
+		<key>CFBundleIdentifier</key>
+		<string>com.example.newapp</string>
+		<key>CFBundleShortVersionString</key>
+		<string>2.0</string>
+		<key>CFBundleVersion</key>
+		<string>200</string>
+		<key>iTunesMetadata</key>
+		<data>PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHBsaXN0IHZlcnNpb249IjEuMCI+PGRpY3Q+PGtleT5pdGVtSWQ8L2tleT48aW50ZWdlcj4yMjIyMjIyPC9pbnRlZ2VyPjxrZXk+aXRlbU5hbWU8L2tleT48c3RyaW5nPk5ldyBBcHA8L3N0cmluZz48L2RpY3Q+PC9wbGlzdD4K</data>
+	</dict>
+	<dict>
+		<key>CFBundleName</key>
+		<string>Not Purchased</string>
+		<key>CFBundleIdentifier</key>
+		<string>com.example.notpurchased</string>
+		<key>CFBundleShortVersionString</key>
+		<string>5.1</string>
+	</dict>
+</array>
+</plist>

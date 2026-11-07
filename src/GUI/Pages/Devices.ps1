@@ -1,4 +1,4 @@
-﻿# Устройства: сканирование USB, установка IPA на выбранные устройства с проверкой минимальной iOS.
+﻿# Устройства: поиск по кабелю и Wi-Fi, установка IPA на выбранные устройства с проверкой минимальной iOS.
 
 $script:DeviceRows = New-Object System.Collections.ObjectModel.ObservableCollection[IPADredd.Gui.DeviceRow]
 $script:DeviceScanTask = $null
@@ -38,7 +38,10 @@ function Update-DevicesTexts {
     $u.DevEmptyText.Text = $hint
     $u.DevEmptyText.Visibility = if ($hint) { 'Visible' } else { 'Collapsed' }
     $u.DevStatusText.Text = if ($script:DevicesScanned) { TF 'Devices.Found' @($script:DeviceRows.Count) } else { '' }
-    foreach ($r in $script:DeviceRows) { $r.StatusText = T "Device.Status.$($r.Status)" }
+    foreach ($r in $script:DeviceRows) {
+        $r.StatusText = T "Device.Status.$($r.Status)"
+        $r.ConnectionText = if ($r.Connection) { T "Device.Conn.$($r.Connection)" } else { '' }
+    }
     Update-DevicesButtons
 }
 
@@ -66,13 +69,16 @@ function Start-DreddDeviceScan {
             $row = New-Object IPADredd.Gui.DeviceRow
             $row.Name = $d.Name; $row.Model = $d.ProductType; $row.IosVersion = $d.iOSVersion; $row.Udid = $d.UDID
             $row.Status = $d.Status; $row.Detail = $d.Detail
+            $row.Connection = $d.Connection
             $script:DeviceRows.Add($row)
         }
         $script:Devices = @($r.Devices | Where-Object { $_ })
         if ($script:DeviceRows.Count -eq 1) { $script:UI.DevGrid.SelectedIndex = 0 }
         Add-DreddLog -Level Info -Area 'Devices' -Message (TF 'Devices.Found' @($script:DeviceRows.Count))
-        Resume-DreddPendingInstall
         Update-DevicesTexts
+        Resume-DreddPendingInstall
+        # Совместимость с iOS найденного iPhone — в «Покупках».
+        if (Get-Command Update-DreddPurchaseStatuses -ErrorAction SilentlyContinue) { Update-DreddPurchaseStatuses }
     } -OnError {
         param($m)
         $script:DeviceScanTask = $null
@@ -284,6 +290,10 @@ function Start-DreddNextAutoInstall {
         $job = $script:AutoInstallJob
         if ($r.Ok) {
             if ($job.Item) { Set-DreddQueueStatus $job.Item 'Installed' }
+            # Сравнение с iPhone: только что установленное больше не «нет на iPhone».
+            if ($job.Item -and $job.Item.AppId -and (Get-Command Set-DreddDeviceAppInstalled -ErrorAction SilentlyContinue)) {
+                Set-DreddDeviceAppInstalled -AppId $job.Item.AppId -Udid $job.Udid -Version $job.Version
+            }
             Add-DreddLog -Level Success -Area 'Install' -Message ("✔ {0} → {1}" -f $job.Name, $job.Device)
             Show-DreddToast -Kind Success -Title (TF 'Install.Done' @($job.Name, $job.Device)) -AutoHideMs 5000 -Low
         } else {
