@@ -70,9 +70,9 @@ Export-ModuleMember -Function @(
     # Diagnostics
     'Get-DreddEnvironment', 'Get-DreddDiagnostics', 'New-DreddDiagnosticReport', 'Export-DreddDiagnosticReport',
     # Remote
-    'Update-DreddRemoteLists', 'Get-DreddLatestRelease', 'Test-DreddAppsListContent',
+    'Update-DreddRemoteLists', 'Invoke-DreddWebText', 'Test-DreddTransientWebError', 'Get-DreddWebErrorText', 'Get-DreddLatestRelease', 'Test-DreddAppsListContent',
     # Updates
-    'Get-DreddToolVersion', 'Test-DreddToolUpdate', 'Install-DreddToolUpdate', 'Test-DreddNeedsSetup', 'Test-DreddAppUpdate',
+    'Get-DreddToolVersion', 'Get-DreddBundleVersion', 'Test-DreddToolUpdate', 'Install-DreddToolUpdate', 'Test-DreddNeedsSetup', 'Test-DreddAppUpdate',
     # Localization
     'Get-DreddStrings', 'Get-DreddLanguages'
 )

@@ -66,6 +66,7 @@ $state = Join-Path $work 'fake_state'
 New-Item -ItemType Directory $state | Out-Null
 New-Item -ItemType File (Join-Path $state 'logged_in') | Out-Null
 $env:FAKE_STATE_DIR = $state
+$env:FAKE_WIFI_DEVICE = '1'   # второй iPhone по Wi-Fi — колонка «Подключение»
 $shots = Join-Path $work 'shots'
 Push-Location $copy
 try { & powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File IPA_Dredd.ps1 -SelfTest -Demo -Screenshot $shots -TestIpatool 'tests\fixtures\fake-ipatool.cmd' }

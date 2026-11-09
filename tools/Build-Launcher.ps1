@@ -1,12 +1,13 @@
 ﻿# Собирает IPA_PILOTDREDD.exe (запускатор с иконкой) и иконку src/GUI/Assets/app.ico.
 # Нужен только csc.exe из .NET Framework 4 — он есть в каждой Windows 10/11.
 # Пример: powershell -NoProfile -ExecutionPolicy Bypass -File tools\Build-Launcher.ps1 [-OutDir <папка>] [-RebuildIcon]
+# Готовый exe хранится в репозитории (tools/Launcher/IPA_PILOTDREDD.exe) вместе с хешем исходников (launcher.sha256):
+# релизы копируют один и тот же файл, у него копится репутация в SmartScreen/Defender. Пересборка — только когда
+# изменились Launcher.cs или иконка (Build-Release проверяет хеш); после неё exe и launcher.sha256 нужно закоммитить.
 param([string]$OutDir, [switch]$RebuildIcon)
 $ErrorActionPreference = 'Stop'
 $appRoot = Split-Path $PSScriptRoot -Parent
-if (-not $OutDir) { $OutDir = $appRoot }
-Import-Module (Join-Path $appRoot 'src/Core/IPADredd.Core.psm1') -Force -DisableNameChecking
-$version = Get-DreddVersion
+if (-not $OutDir) { $OutDir = Join-Path $PSScriptRoot 'Launcher' }
 
 # ---- Иконка: скруглённый квадрат цвета акцента со стрелкой загрузки, PNG-кадры 16…256 в одном .ico ----
 $ico = Join-Path $appRoot 'src/GUI/Assets/app.ico'
@@ -60,12 +61,16 @@ $csc = Join-Path ([Runtime.InteropServices.RuntimeEnvironment]::GetRuntimeDirect
 if (-not (Test-Path $csc)) { $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe' }
 if (-not (Test-Path $csc)) { throw 'csc.exe (.NET Framework 4) not found' }
 $src = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Launcher\Launcher.cs'), [System.Text.Encoding]::UTF8)
-$src = $src.Replace('public const string Version = "0.0.0.0";', ('public const string Version = "{0}.0";' -f $version))
+# Встроенный Windows PowerShell 5.1 (есть в каждой Windows 10/11):
+$sma = [psobject].Assembly.Location
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('dredd_launcher_' + [guid]::NewGuid().ToString('N').Substring(0, 6) + '.cs')
 [System.IO.File]::WriteAllText($tmp, $src, (New-Object System.Text.UTF8Encoding($true)))
 $exe = Join-Path $OutDir 'IPA_PILOTDREDD.exe'
 try {
-    $o = & $csc /nologo /target:winexe /platform:anycpu /optimize+ /codepage:65001 "/win32icon:$ico" "/out:$exe" /reference:System.Windows.Forms.dll $tmp 2>&1
+    $o = & $csc /nologo /target:winexe /platform:anycpu /optimize+ /codepage:65001 "/win32icon:$ico" "/out:$exe" /reference:System.Windows.Forms.dll "/reference:$sma" $tmp 2>&1
     if ($LASTEXITCODE -ne 0) { throw "csc failed:`n$($o -join "`n")" }
 } finally { Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue }
 Write-Output ("Launcher: {0} ({1:N0} KB)" -f $exe, ((Get-Item $exe).Length / 1KB))
+# Хеш исходников запускатора — по нему Build-Release понимает, что готовый exe соответствует коду.
+$hashFile = Join-Path $OutDir 'launcher.sha256'
+Set-Content -LiteralPath $hashFile -Value (& (Join-Path $PSScriptRoot 'Get-LauncherSourceHash.ps1')) -Encoding ASCII

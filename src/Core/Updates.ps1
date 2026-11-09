@@ -1,8 +1,10 @@
-﻿# Обновление ipatool-cpp из релизов upstream (kda2495/IPA_Downloader).
-# Версия встроенного ipatool записана в MainApp/ipatool-version.txt (номер релиза upstream, из которого он взят).
+﻿# Компоненты и их обновление.
+#   Первая установка (Setup): весь набор из релиза IPA Downloader (UpdateRepo, kda2495) — ipatool и инструменты iPhone.
+#   Обновление ipatool (Tool): напрямую из релизов ipatool-cpp (ToolRepo, Sorvigolova), архив <платформа>_ipatool-cpp.zip.
+#     Так исправления входа доходят без ожидания новой сборки IPA Downloader (ноябрь 2026, kda2495/IPA_Downloader#29).
+# Версии: MainApp/ipatool-cpp-version.txt — версия ipatool-cpp; MainApp/ipatool-version.txt — версия набора IPA Downloader.
 # Установка: архив релиза → проверка SHA-256 из GitHub API → проверка запуска → резервная копия в MainApp_previous → замена.
-# Релиз IPA PILOTDREDD бинарники не содержит (в ipatool-cpp вшиты библиотеки Apple, ideviceinstaller — GPL):
-# при первом запуске компоненты ставятся отсюда же из официального релиза upstream (-Setup / NeedsSetup).
+# Релиз IPA PILOTDREDD бинарники не содержит (в ipatool-cpp вшиты библиотеки Apple, ideviceinstaller — GPL).
 
 function Test-DreddNeedsSetup {
     # Компонентов нет совсем: ни ipatool в MainApp/настройках/папках 4.x.
@@ -11,6 +13,7 @@ function Test-DreddNeedsSetup {
 }
 
 $script:ToolVersionFile = 'ipatool-version.txt'
+$script:CppVersionFile = 'ipatool-cpp-version.txt'
 
 function Get-DreddMainAppDir {
     # Папка MainApp рядом с программой — только её программа обновляет сама (чужие папки 4.2/настроек не трогаются).
@@ -18,27 +21,47 @@ function Get-DreddMainAppDir {
     return Join-Path $Context.AppRoot 'MainApp'
 }
 
-function Get-DreddToolVersion {
-    # Номер релиза upstream встроенного ipatool или $null, если неизвестен.
-    param([Parameter(Mandatory)]$Context)
-    $f = Join-Path (Get-DreddMainAppDir $Context) $script:ToolVersionFile
-    $t = Read-DreddTextFile -Path $f
+function Read-DreddVersionFile([string]$Path) {
+    $t = Read-DreddTextFile -Path $Path
     if ($t -and $t.Trim() -match '^\d+(\.\d+){1,3}$') { return $t.Trim() }
     return $null
 }
 
+function Get-DreddToolVersion {
+    # Версия ipatool-cpp в MainApp или $null, если неизвестна (ipatool пришёл из набора IPA Downloader — версия не записана).
+    param([Parameter(Mandatory)]$Context)
+    return Read-DreddVersionFile (Join-Path (Get-DreddMainAppDir $Context) $script:CppVersionFile)
+}
+
+function Get-DreddBundleVersion {
+    # Версия набора IPA Downloader, из которого поставлены компоненты, или $null.
+    param([Parameter(Mandatory)]$Context)
+    return Read-DreddVersionFile (Join-Path (Get-DreddMainAppDir $Context) $script:ToolVersionFile)
+}
+
+function Get-DreddToolAssetPattern {
+    # Архив ipatool-cpp для платформы: windows_amd64_ipatool-cpp.zip, macOS_arm64_ipatool-cpp.zip…
+    param([Parameter(Mandatory)]$Context)
+    $plat = [string]$Context.Platform.BinaryFolder
+    if (-not $plat) { return '^$' }
+    return '^' + [regex]::Escape($plat) + '_ipatool-cpp\.zip$'
+}
+
 function Get-DreddLatestRelease {
-    # Последний релиз upstream: Tag, Version, Url, Asset { Name, Url, Size, Sha256 } (архив релиза).
-    param([Parameter(Mandatory)]$Context, [scriptblock]$Fetch)
-    if (-not $Fetch) { $Fetch = { param($url) Invoke-DreddWebText -Url $url -TimeoutSec 20 } }
-    $repo = [string]$Context.Settings['UpdateRepo']
-    if ($repo -notmatch '^[\w.-]+/[\w.-]+$') { throw 'Invalid UpdateRepo' }
+    # Последний релиз: Tag, Version, Url, Kind, Asset { Name, Url, Size, Sha256 } (архив релиза).
+    # Kind = Bundle — набор IPA Downloader (UpdateRepo); Tool — ipatool-cpp для этой платформы (ToolRepo).
+    param([Parameter(Mandatory)]$Context, [scriptblock]$Fetch, [ValidateSet('Bundle', 'Tool')][string]$Kind = 'Bundle')
+    if (-not $Fetch) { $Fetch = { param($url) Invoke-DreddWebText -Url $url -TimeoutSec 20 -Retries 2 } }
+    $setting = if ($Kind -eq 'Tool') { 'ToolRepo' } else { 'UpdateRepo' }
+    $repo = [string]$Context.Settings[$setting]
+    if ($repo -notmatch '^[\w.-]+/[\w.-]+$') { throw "Invalid $setting" }
+    $pattern = if ($Kind -eq 'Tool') { Get-DreddToolAssetPattern $Context } else { '\.zip$' }
     $json = (& $Fetch "https://api.github.com/repos/$repo/releases/latest") | ConvertFrom-Json
     $tag = [string](Get-DreddProp $json 'tag_name')
     $asset = $null
     foreach ($a in @(Get-DreddProp $json 'assets' @())) {
         $name = [string](Get-DreddProp $a 'name')
-        if ($name -notmatch '\.zip$') { continue }
+        if ($name -notmatch $pattern) { continue }
         $digest = [string](Get-DreddProp $a 'digest' '')
         $asset = [pscustomobject]@{
             Name = $name; Url = [string](Get-DreddProp $a 'browser_download_url'); Size = [long](Get-DreddProp $a 'size' 0)
@@ -46,7 +69,7 @@ function Get-DreddLatestRelease {
         }
         break
     }
-    [pscustomobject]@{ Tag = $tag; Version = [regex]::Match($tag, '\d+(\.\d+)+').Value; Url = "https://github.com/$repo/releases"; Asset = $asset }
+    [pscustomobject]@{ Tag = $tag; Version = [regex]::Match($tag, '\d+(\.\d+)+').Value; Url = "https://github.com/$repo/releases"; Kind = $Kind; Asset = $asset }
 }
 
 function Test-DreddAppUpdate {
@@ -56,7 +79,7 @@ function Test-DreddAppUpdate {
       Url — всегда страница релиза на github.com (чужой адрес из ответа не открывается).
     #>
     param([Parameter(Mandatory)]$Context, [scriptblock]$Fetch)
-    if (-not $Fetch) { $Fetch = { param($url) Invoke-DreddWebText -Url $url -TimeoutSec 20 } }
+    if (-not $Fetch) { $Fetch = { param($url) Invoke-DreddWebText -Url $url -TimeoutSec 20 -Retries 2 } }
     $res = [ordered]@{ Ok = $false; Current = $script:DreddVersion; Latest = $null; IsNewer = $false; Url = $null; Notes = ''; Error = $null }
     $repo = [string]$Context.Settings['AppRepo']
     if ($repo -notmatch '^[\w.-]+/[\w.-]+$') { $res.Error = 'Invalid AppRepo'; return [pscustomobject]$res }
@@ -76,7 +99,7 @@ function Test-DreddAppUpdate {
         if ($notes.Length -gt 500) { $notes = $notes.Substring(0, 500).TrimEnd() + '…' }
         $res.Notes = $notes
         if ($ver) { $res.IsNewer = (Compare-DreddVersion $script:DreddVersion $ver) -eq -1 }
-    } catch { $res.Error = $_.Exception.Message }
+    } catch { $res.Error = (Get-DreddWebErrorText $_.Exception) }
     return [pscustomobject]$res
 }
 
@@ -84,14 +107,16 @@ function Test-DreddToolUpdate {
     <#
       Тихая проверка: Ok, Current, Latest, IsNewer, CanInstall, Reason, Release, NeedsSetup.
       CanInstall — можно обновить автоматически (MainApp рядом с программой или компонентов нет вовсе, у архива есть SHA-256).
-      NeedsSetup — первый запуск: компонентов нет, установка возьмёт и инструменты устройств.
+      NeedsSetup — первый запуск: компонентов нет, ставится набор IPA Downloader (с инструментами устройств).
+      Иначе сравнивается версия ipatool-cpp с его последним релизом; если версия не записана (ipatool из набора
+      IPA Downloader) — обновление предлагается один раз, после него версия известна.
     #>
     param([Parameter(Mandatory)]$Context, [scriptblock]$Fetch)
-    $current = Get-DreddToolVersion $Context
     $setup = Test-DreddNeedsSetup $Context
+    $current = if ($setup) { $null } else { Get-DreddToolVersion $Context }
     $res = [ordered]@{ Ok = $false; Current = $current; Latest = $null; IsNewer = $false; CanInstall = $false; Reason = $null; Release = $null; Error = $null; NeedsSetup = $setup }
-    try { $rel = Get-DreddLatestRelease -Context $Context -Fetch $Fetch }
-    catch { $res.Error = $_.Exception.Message; return [pscustomobject]$res }
+    try { $rel = Get-DreddLatestRelease -Context $Context -Fetch $Fetch -Kind $(if ($setup) { 'Bundle' } else { 'Tool' }) }
+    catch { $res.Error = (Get-DreddWebErrorText $_.Exception); return [pscustomobject]$res }
     $res.Ok = $true; $res.Release = $rel; $res.Latest = $rel.Version
     if ($setup -or -not $current) { $res.IsNewer = [bool]$rel.Version }
     elseif ($rel.Version) { $res.IsNewer = (Compare-DreddVersion $current $rel.Version) -eq -1 }
@@ -104,6 +129,20 @@ function Test-DreddToolUpdate {
 }
 
 function Save-DreddWebFile {
+    # Загрузка с повтором при временных сбоях GitHub (502/503/504, обрыв, таймаут): до $Retries повторов через 2, 5, 10 с.
+    param([string]$Url, [string]$Path, [long]$ExpectedSize, $Reporter, $CancellationToken, [int]$Retries = 3)
+    for ($attempt = 0; ; $attempt++) {
+        try { Save-DreddWebFileOnce -Url $Url -Path $Path -ExpectedSize $ExpectedSize -Reporter $Reporter -CancellationToken $CancellationToken; return }
+        catch [System.OperationCanceledException] { throw }
+        catch {
+            if ($attempt -ge $Retries -or -not (Test-DreddTransientWebError $_.Exception)) { throw }
+            Write-DreddReport -Reporter $Reporter -Type log -Level Warning -Area 'Update' -Message ("retry {0}/{1}: {2}" -f ($attempt + 1), $Retries, (Get-DreddWebErrorText $_.Exception))
+            Wait-DreddRetryDelay -Attempt $attempt -CancellationToken $CancellationToken
+        }
+    }
+}
+
+function Save-DreddWebFileOnce {
     # Загрузка файла с прогрессом (сообщения progress { Percent; Bytes }) и отменой.
     param([string]$Url, [string]$Path, [long]$ExpectedSize, $Reporter, $CancellationToken)
     try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
@@ -150,7 +189,7 @@ function Install-DreddToolUpdate {
             Write-DreddReport -Reporter $Reporter -Type status -Area 'Update' -Message 'download'
             try { Save-DreddWebFile -Url $asset.Url -Path $zip -ExpectedSize $asset.Size -Reporter $Reporter -CancellationToken $CancellationToken }
             catch [System.OperationCanceledException] { return (& $fail 'Err.Cancelled' '') }
-            catch { return (& $fail 'Err.Network' $_.Exception.Message) }
+            catch { return (& $fail $(if (Test-DreddTransientWebError $_.Exception) { 'Err.GitHubBusy' } else { 'Err.Network' }) (Get-DreddWebErrorText $_.Exception)) }
         }
         Write-DreddReport -Reporter $Reporter -Type status -Area 'Update' -Message 'verify'
         $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -158,14 +197,20 @@ function Install-DreddToolUpdate {
 
         $x = Join-Path $work 'x'
         [System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $x)
-        # Новые ipatool по платформам: …/MainApp/<платформа>/ipatool-cpp-*
-        $new = @{}
-        foreach ($f in [System.IO.Directory]::GetFiles($x, 'ipatool-cpp-*', [System.IO.SearchOption]::AllDirectories)) {
-            $plat = [System.IO.Path]::GetFileName([System.IO.Path]::GetDirectoryName($f))
-            $parent = [System.IO.Path]::GetFileName([System.IO.Path]::GetDirectoryName([System.IO.Path]::GetDirectoryName($f)))
-            if ($parent -eq 'MainApp') { $new[$plat] = $f }
-        }
         $platDir = $Context.Platform.BinaryFolder
+        $new = @{}
+        if ($Release.Kind -eq 'Tool') {
+            # Релиз ipatool-cpp: архив для одной платформы, внутри один файл ipatool-cpp-<платформа>[.exe].
+            $found = @([System.IO.Directory]::GetFiles($x, 'ipatool-cpp-*', [System.IO.SearchOption]::AllDirectories))
+            if ($found.Count -eq 1) { $new[$platDir] = $found[0] }
+        } else {
+            # Набор IPA Downloader: …/MainApp/<платформа>/ipatool-cpp-*
+            foreach ($f in [System.IO.Directory]::GetFiles($x, 'ipatool-cpp-*', [System.IO.SearchOption]::AllDirectories)) {
+                $plat = [System.IO.Path]::GetFileName([System.IO.Path]::GetDirectoryName($f))
+                $parent = [System.IO.Path]::GetFileName([System.IO.Path]::GetDirectoryName([System.IO.Path]::GetDirectoryName($f)))
+                if ($parent -eq 'MainApp') { $new[$plat] = $f }
+            }
+        }
         if (-not $new.ContainsKey($platDir)) { return (& $fail 'Err.UpdateBadArchive' "no ipatool for $platDir") }
 
         # Пробный запуск нового ipatool для текущей платформы (без аргументов печатает справку).
@@ -187,7 +232,10 @@ function Install-DreddToolUpdate {
                     }
                     continue
                 }
-                if (-not [System.IO.Directory]::Exists($destDir)) { continue }
+                if (-not [System.IO.Directory]::Exists($destDir)) {
+                    if ($plat -eq $platDir) { throw "MainApp\$plat not found" }
+                    continue
+                }
                 $name = [System.IO.Path]::GetFileName($new[$plat])
                 $dest = Join-Path $destDir $name
                 if ([System.IO.File]::Exists($dest)) {
@@ -207,10 +255,12 @@ function Install-DreddToolUpdate {
             }
             return (& $fail 'Err.UpdateInstall' $_.Exception.Message)
         }
-        $prev = Get-DreddToolVersion $Context
-        if ($prev) { Write-DreddTextFile -Path (Join-Path $backupRoot $script:ToolVersionFile) -Content $prev }
-        Write-DreddTextFile -Path (Join-Path $mainApp $script:ToolVersionFile) -Content $Release.Version
-        Write-DreddReport -Reporter $Reporter -Type log -Level Success -Area 'Update' -Message ("ipatool {0} → {1}" -f $prev, $Release.Version)
+        $file = if ($Release.Kind -eq 'Tool') { $script:CppVersionFile } else { $script:ToolVersionFile }
+        $prev = Read-DreddVersionFile (Join-Path $mainApp $file)
+        if ($prev) { Write-DreddTextFile -Path (Join-Path $backupRoot $file) -Content $prev }
+        Write-DreddTextFile -Path (Join-Path $mainApp $file) -Content $Release.Version
+        $label = if ($Release.Kind -eq 'Tool') { 'ipatool-cpp' } else { 'IPA Downloader' }
+        Write-DreddReport -Reporter $Reporter -Type log -Level Success -Area 'Update' -Message ("{0} {1} → {2}" -f $label, $(if ($prev) { $prev } else { '?' }), $Release.Version)
         return [pscustomobject]@{ Ok = $true; Version = $Release.Version; ErrorKey = $null; Message = '' }
     } finally {
         try { if ([System.IO.Directory]::Exists($work)) { [System.IO.Directory]::Delete($work, $true) } } catch { }

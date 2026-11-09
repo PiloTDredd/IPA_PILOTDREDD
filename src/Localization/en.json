@@ -363,6 +363,7 @@
   "Err.Unavailable": "The App Store replied “temporarily unavailable” when getting a license. Usually the app is not available in the storefront of this Apple ID or was pulled. If it is already in the account purchases, uncheck “Get license” and download again",
   "Err.Region": "The app is not available in your account's storefront",
   "Err.Network": "Network error: check your internet connection",
+  "Err.GitHubBusy": "GitHub is temporarily not responding — the app retried 3 times. Try again in a few minutes",
   "Err.Paid": "Paid app: IPA PILOTDREDD cannot get a license for it",
   "Err.EmailFormat": "Enter your Apple ID as an email address",
   "Err.PasswordEmpty": "Enter the password",

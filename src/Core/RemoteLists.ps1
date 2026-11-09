@@ -10,7 +10,62 @@ function Test-DreddAppsListContent {
     return ($n -ge 10)
 }
 
+function Test-DreddTransientWebError {
+    # Временный сбой сервера или сети, который стоит повторить: 408/429/5xx, таймаут, обрыв соединения.
+    param($Exception)
+    $e = $Exception
+    while ($e) {
+        if ($e -is [System.Net.WebException]) {
+            $resp = $e.Response
+            if ($resp -is [System.Net.HttpWebResponse]) { return ([int]$resp.StatusCode -in 408, 429, 500, 502, 503, 504) }
+            return ($e.Status -in 'Timeout', 'ConnectFailure', 'ConnectionClosed', 'KeepAliveFailure', 'ReceiveFailure', 'SendFailure', 'PipelineFailure', 'NameResolutionFailure')
+        }
+        if ($e -is [System.IO.IOException] -or $e -is [System.TimeoutException]) { return $true }
+        $e = $e.InnerException
+    }
+    return $false
+}
+
+function Get-DreddWebErrorText {
+    # Короткое описание сетевой ошибки без обёрток PowerShell («Исключение при вызове "GetResponse"…»): «HTTP 502» и т. п.
+    param($Exception)
+    $e = $Exception
+    while ($e) {
+        if ($e -is [System.Net.WebException]) {
+            if ($e.Response -is [System.Net.HttpWebResponse]) { return ('HTTP {0}' -f [int]$e.Response.StatusCode) }
+            return [string]$e.Status
+        }
+        if (-not $e.InnerException) { return $e.Message }
+        $e = $e.InnerException
+    }
+    return ''
+}
+
+function Wait-DreddRetryDelay {
+    # Пауза перед повтором: 2, 5, 10 с; прерывается отменой.
+    param([int]$Attempt, $CancellationToken)
+    $ms = @(2000, 5000, 10000)[[Math]::Min($Attempt, 2)]
+    if ($env:IPADREDD_FAST_RETRY) { $ms = 10 }
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($sw.ElapsedMilliseconds -lt $ms) {
+        if ($null -ne $CancellationToken -and $CancellationToken.IsCancellationRequested) { throw (New-Object System.OperationCanceledException) }
+        Start-Sleep -Milliseconds 50
+    }
+}
+
 function Invoke-DreddWebText {
+    # Текст по HTTPS; при временных сбоях — до $Retries повторов (по умолчанию без повторов).
+    param([string]$Url, [int]$TimeoutSec = 15, [int]$Retries = 0)
+    for ($attempt = 0; ; $attempt++) {
+        try { return (Invoke-DreddWebTextOnce -Url $Url -TimeoutSec $TimeoutSec) }
+        catch {
+            if ($attempt -ge $Retries -or -not (Test-DreddTransientWebError $_.Exception)) { throw }
+            Wait-DreddRetryDelay -Attempt $attempt
+        }
+    }
+}
+
+function Invoke-DreddWebTextOnce {
     param([string]$Url, [int]$TimeoutSec = 15)
     try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
     $req = [System.Net.HttpWebRequest]::Create($Url)

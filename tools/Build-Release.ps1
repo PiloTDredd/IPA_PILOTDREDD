@@ -27,8 +27,19 @@ foreach ($item in 'VERSION', 'IPA_Dredd.ps1', 'Start_IPA_Dredd_Windows.bat', 'RE
 Copy-Item -LiteralPath (Join-Path $appRoot 'Files/AppsList.txt') -Destination (Join-Path $stage 'Files')
 # AppsListCustom.txt не кладём: при копировании новой версии поверх старой он затёр бы «Мой список» (программа создаёт файл сама).
 
-# Запускатор с иконкой — собирается заново под эту версию:
-& (Join-Path $PSScriptRoot 'Build-Launcher.ps1') -OutDir $stage | Out-Null
+# Запускатор с иконкой — один и тот же exe из релиза в релиз (tools/Launcher), пересборка только при изменении исходников:
+$launcherDir = Join-Path $PSScriptRoot 'Launcher'
+$launcherExe = Join-Path $launcherDir 'IPA_PILOTDREDD.exe'
+$launcherHash = Join-Path $launcherDir 'launcher.sha256'
+$current = & (Join-Path $PSScriptRoot 'Get-LauncherSourceHash.ps1')
+$recorded = if (Test-Path $launcherHash) { (Get-Content -LiteralPath $launcherHash -Raw).Trim() } else { '' }
+if (-not (Test-Path $launcherExe) -or $recorded -ne $current) {
+    Write-Warning 'Launcher sources changed: rebuilding tools/Launcher/IPA_PILOTDREDD.exe — commit it together with launcher.sha256.'
+    & (Join-Path $PSScriptRoot 'Build-Launcher.ps1') | Out-Null
+}
+Copy-Item -LiteralPath $launcherExe -Destination (Join-Path $stage 'IPA_PILOTDREDD.exe')
+# В архиве копия tools/ без готового exe (он уже лежит в корне программы):
+Remove-Item -LiteralPath (Join-Path $stage 'tools\Launcher\IPA_PILOTDREDD.exe') -ErrorAction SilentlyContinue
 
 # Бинарники и версия ipatool:
 $folders = if (-not $IncludeBinaries) { @() } elseif ($Platforms -eq 'all') { 'windows_amd64', 'macOS_arm64', 'macOS_amd64', 'linux_amd64' } else { @('windows_amd64') }
