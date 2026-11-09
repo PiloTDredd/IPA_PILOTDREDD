@@ -65,6 +65,13 @@ foreach ($page in 'Shell', 'Purchases', 'Catalog', 'Downloads', 'Library', 'Devi
 
 $script:SelfTestMode = [bool]($SelfTest -or $Screenshot)
 $script:Ctx = New-DreddContext -AppRoot $PSScriptRoot
+if ($script:SelfTestMode -and $TestIpatool) {
+    # Самопроверка со сценарием никогда не смотрит в настоящий ~/.ipatool: своя папка «сессий» в копии программы
+    # (фейковый ipatool хранит состояние в FAKE_STATE_DIR, файл account нужен только как признак входа).
+    $script:Ctx.IpatoolHome = Join-Path $PSScriptRoot 'Files\SelfTestHome\.ipatool'
+    [void][System.IO.Directory]::CreateDirectory($script:Ctx.IpatoolHome)
+    [System.IO.File]::WriteAllText((Join-Path $script:Ctx.IpatoolHome 'account'), 'fake')
+}
 
 $script:Window = New-DreddWindow -Path (Join-Path $PSScriptRoot 'src/GUI/MainWindow.xaml')
 $script:UI.AppVersionText.Text = "v$($script:Ctx.Version)"
