@@ -54,6 +54,8 @@ function Initialize-PurchasesPage {
     $u.PurVersionBtn.Add_Click({ Safe { Invoke-DreddPurchaseVersions } })
     $u.PurInstallBtn.Add_Click({ Safe { Invoke-DreddPurchaseInstall @($script:UI.PurGrid.SelectedItems) } })
     $u.PurMenuInstall.Add_Click({ Safe { Invoke-DreddPurchaseInstall @($script:UI.PurGrid.SelectedItems) } })
+    $u.PurUninstallBtn.Add_Click({ Safe { Invoke-DreddPurchaseUninstall @($script:UI.PurGrid.SelectedItems) } })
+    $u.PurMenuUninstall.Add_Click({ Safe { Invoke-DreddPurchaseUninstall @($script:UI.PurGrid.SelectedItems) } })
     $u.PurShowFileBtn.Add_Click({ Safe { $r = $script:UI.PurGrid.SelectedItem; if ($r -and $r.LocalPath) { Open-DreddPath $r.LocalPath -Select } } })
     $u.PurGrid.Add_SelectionChanged({ Safe { Update-PurchaseButtons } })
     $u.PurGrid.Add_MouseDoubleClick({ param($s, $e) Safe {
@@ -333,6 +335,7 @@ function Update-PurchaseCounts {
         # Пустые вкладки (кроме «Все») прячем, чтобы не было лишнего.
         $script:UI[$name].Visibility = if ($key -eq 'All' -or $c[$key] -gt 0 -or $script:PurchaseFilter -eq $key) { 'Visible' } else { 'Collapsed' }
     }
+    Update-DreddHome 'Tiles'
 }
 
 function Update-PurchasesView {
@@ -410,6 +413,12 @@ function Update-PurchaseButtons {
     $u.PurMenuInstall.Header = $u.PurInstallText.Text
     $u.PurMenuInstall.IsEnabled = $u.PurInstallBtn.IsEnabled
     $u.PurShowFileBtn.IsEnabled = $sel.Count -eq 1 -and [bool]$sel[0].LocalPath
+    $onDev = @(Get-DreddPurchaseOnDevice $sel)
+    $u.PurUninstallBtn.Visibility = if ($onDev.Count -gt 0) { 'Visible' } else { 'Collapsed' }
+    $u.PurUninstallBtn.IsEnabled = $onDev.Count -gt 0 -and [bool]$script:Ctx.Binaries.IdeviceInstaller -and -not $script:UninstallTask
+    $u.PurUninstallText.Text = if ($onDev.Count -gt 1) { TF 'Purchases.UninstallN' @($onDev.Count) } else { T 'Purchases.Uninstall' }
+    $u.PurMenuUninstall.Visibility = $u.PurUninstallBtn.Visibility
+    $u.PurMenuUninstall.IsEnabled = $u.PurUninstallBtn.IsEnabled
     $failed = @($script:PurchaseBase.Values | Where-Object { $_ -eq 'Failed' }).Count
     $u.PurRetryBtn.Visibility = if ($failed -gt 0) { 'Visible' } else { 'Collapsed' }
     $u.PurMenuDownload.IsEnabled = $u.PurDownloadBtn.IsEnabled
@@ -628,6 +637,63 @@ function Start-DreddDeviceAppsScan {
     $script:DeviceAppsTask | Add-Member -NotePropertyName DeviceName -NotePropertyValue $dev.Name -Force
     $script:DeviceAppsTask | Add-Member -NotePropertyName Ios -NotePropertyValue $dev.IosVersion -Force
     Update-PurchasesView
+}
+
+function Get-DreddPurchaseOnDevice {
+    # Выбранные строки, которые стоят на iPhone, с которым сравнивали, и для которых известен bundle id на устройстве.
+    param([object[]]$Rows)
+    if (-not $script:DeviceCompare) { return @() }
+    return @($Rows | Where-Object { $_ -and $_.DeviceState -in 'Installed', 'Outdated' -and $script:DeviceMap[$_.Id] -and $script:DeviceMap[$_.Id].DeviceBundleId })
+}
+
+$script:UninstallTask = $null
+
+function Invoke-DreddPurchaseUninstall {
+    # «Удалить с iPhone»: с подтверждением (данные приложения на телефоне тоже удаляются), по одному, с итогом.
+    param([object[]]$Rows)
+    $rows = @(Get-DreddPurchaseOnDevice $Rows)
+    if ($rows.Count -eq 0 -or $script:UninstallTask) { return }
+    $dev = $script:DeviceCompare
+    $names = (@($rows | Select-Object -First 8 | ForEach-Object { "• $($_.Name)" }) + @(if ($rows.Count -gt 8) { TF 'Purchases.AndMore' @($rows.Count - 8) })) -join "`n"
+    if (-not (Confirm-Dredd -Title (TF 'Purchases.UninstallTitle' @($rows.Count, $dev.Name)) -Message ((T 'Purchases.UninstallText') + "`n`n" + $names) -YesText (T 'Purchases.Uninstall') -Danger -Kind Warning)) { return }
+    $items = @($rows | ForEach-Object { [pscustomobject]@{ Id = $_.Id; Name = $_.Name; BundleId = $script:DeviceMap[$_.Id].DeviceBundleId; Version = $script:DeviceMap[$_.Id].DeviceVersion } })
+    $script:UninstallTask = Start-DreddTask -Name (T 'Task.Uninstall') -Arguments @{ Items = $items; Udid = $dev.Udid; Device = $dev.Name } -Script {
+        $results = @()
+        foreach ($it in $A.Items) {
+            if ($Token.IsCancellationRequested) { break }
+            $r = Uninstall-DreddApp -Context $Context -BundleId $it.BundleId -UDID $A.Udid -Reporter $Reporter -CancellationToken $Token
+            $res = if ($r.Ok) { 'Success' } elseif ($r.ErrorKey -eq 'Err.Cancelled') { 'Cancelled' } else { 'Error' }
+            Add-DreddHistoryEntry -Context $Context -Kind Uninstall -AppId $it.Id -Name $it.Name -Version $it.Version -Target $A.Device -Result $res -Message $r.Message
+            if ($r.Ok) { Write-DreddReport -Reporter $Reporter -Type log -Level Success -Area 'Uninstall' -Message ("✔ {0} ✕ {1}" -f $it.Name, $A.Device) }
+            else { Write-DreddReport -Reporter $Reporter -Type log -Level Error -Area 'Uninstall' -Message ("✖ {0}: {1} {2}" -f $it.Name, $r.ErrorKey, $r.Message) }
+            $results += [pscustomobject]@{ Id = $it.Id; Name = $it.Name; BundleId = $it.BundleId; Ok = $r.Ok; ErrorKey = $r.ErrorKey; Message = $r.Message }
+        }
+        , $results
+    } -OnComplete {
+        param($results)
+        $script:UninstallTask = $null
+        $ok = @($results | Where-Object { $_.Ok })
+        $fail = @($results | Where-Object { -not $_.Ok -and $_.ErrorKey -ne 'Err.Cancelled' })
+        if ($ok.Count -gt 0 -and $script:DeviceCompare) {
+            # Удалённое больше не «на iPhone»: убираем из списка приложений устройства и пересчитываем сравнение.
+            $gone = @($ok | ForEach-Object { $_.BundleId.ToLowerInvariant() })
+            $script:DeviceCompare.Apps = @($script:DeviceCompare.Apps | Where-Object { -not $_.BundleId -or $gone -notcontains $_.BundleId.ToLowerInvariant() })
+            Update-DreddPurchaseStatuses
+        }
+        $title = TF 'Purchases.Uninstalled' @($ok.Count, $script:DeviceCompare.Name)
+        if ($fail.Count -gt 0) {
+            $lines = $fail | ForEach-Object { "• $($_.Name): $(Get-DreddErrorText $_.ErrorKey $_.Message)" }
+            Show-DreddToast -Kind Warning -Title $title -Text ($lines -join "`n")
+        } elseif ($ok.Count -gt 0) { Show-DreddToast -Kind Success -Title $title -AutoHideMs 5000 -Low }
+        if (Get-Command Update-DownloadsHistory -ErrorAction SilentlyContinue) { Update-DownloadsHistory }
+        Update-PurchasesView
+    } -OnError {
+        param($m)
+        $script:UninstallTask = $null
+        Add-DreddLog -Level Error -Area 'Uninstall' -Message $m
+        Update-PurchaseButtons
+    }
+    Update-PurchaseButtons
 }
 
 function Set-DreddDeviceAppInstalled {

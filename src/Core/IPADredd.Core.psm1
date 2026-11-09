@@ -65,7 +65,7 @@ Export-ModuleMember -Function @(
     # Downloads
     'Invoke-DreddDownload', 'Get-DreddProgressFromLine', 'Save-DreddQueue', 'Read-DreddQueue', 'Test-DreddFreeSpace',
     # Devices
-    'Get-DreddDevices', 'Install-DreddIpa', 'ConvertTo-DreddIosVersion', 'Test-DreddIosCompatible',
+    'Get-DreddDevices', 'ConvertFrom-DreddDiskUsage', 'Install-DreddIpa', 'Uninstall-DreddApp', 'ConvertTo-DreddModelName', 'ConvertTo-DreddIosVersion', 'Test-DreddIosCompatible',
     'Get-DreddDeviceApps', 'Get-DreddDeviceErrorKey', 'Compare-DreddDeviceApps', 'ConvertFrom-DreddDeviceAppsXml', 'ConvertFrom-DreddDeviceAppsText', 'ConvertFrom-DreddUdidList',
     # Diagnostics
     'Get-DreddEnvironment', 'Get-DreddDiagnostics', 'New-DreddDiagnosticReport', 'Export-DreddDiagnosticReport',

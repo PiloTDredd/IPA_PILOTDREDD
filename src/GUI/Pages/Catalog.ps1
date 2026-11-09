@@ -1,7 +1,7 @@
 ﻿# Поиск: App Store + популярные + свой список. Покупки аккаунта — на экране «Покупки» (Purchases.ps1).
 
 $script:CatalogRows = New-Object System.Collections.ObjectModel.ObservableCollection[IPADredd.Gui.CatalogRow]
-$script:CatalogSource = 'Search'
+$script:CatalogSource = 'Popular'
 $script:StoreResults = @()          # результаты App Store для последнего запроса
 $script:StoreQuery = $null
 $script:CatalogTask = $null
@@ -30,11 +30,8 @@ function Initialize-CatalogPage {
     } })
     $u.CatalogAutoPurchase.Add_Click({ Safe { Set-DreddAutoPurchase ([bool]$script:UI.CatalogAutoPurchase.IsChecked) } })
     $u.CatMenuDownload.Add_Click({ Safe { Invoke-DreddCatalogDownload } })
-    $u.CatMenuInstall.Add_Click({ Safe {
-        $map = Get-DreddLocalIpaMap
-        $apps = @($script:UI.CatalogGrid.SelectedItems | ForEach-Object { [pscustomobject]@{ Id = $_.Id; Name = $_.Name; Local = $(if ($map[$_.Id]) { $map[$_.Id].Path } else { $null }) } })
-        Invoke-DreddInstallApps -Apps $apps -Purchase (ConvertTo-DreddBool $script:Ctx.Settings['AutoPurchase'])
-    } })
+    $u.CatMenuInstall.Add_Click({ Safe { Invoke-DreddCatalogInstall @($script:UI.CatalogGrid.SelectedItems) } })
+    $u.CatalogInstallBtn.Add_Click({ Safe { Invoke-DreddCatalogInstall @($script:UI.CatalogGrid.SelectedItems) } })
     $u.CatMenuVersion.Add_Click({ Safe { $script:UI.CatalogVersionBtn.RaiseEvent((New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent))) } })
     $u.CatalogGrid.Add_PreviewKeyDown({ param($s, $e) Safe {
         $ctrl = ([System.Windows.Input.Keyboard]::Modifiers -band [System.Windows.Input.ModifierKeys]::Control) -ne 0
@@ -226,6 +223,7 @@ function Update-CatalogButtons {
     $u.CatMenuCopyId.IsEnabled = $n -gt 0
     $u.CatMenuDownload.IsEnabled = $u.CatalogDownloadBtn.IsEnabled
     $u.CatMenuInstall.IsEnabled = $n -gt 0 -and [bool]$script:Ctx.Binaries.IdeviceInstaller
+    $u.CatalogInstallBtn.IsEnabled = $u.CatMenuInstall.IsEnabled
     $u.CatMenuVersion.IsEnabled = $u.CatalogVersionBtn.IsEnabled
 }
 
@@ -260,9 +258,38 @@ function Start-DreddStoreSearch {
     Update-CatalogEmptyState
 }
 
+function Invoke-DreddCatalogInstall {
+    # «На iPhone»: уже скачанное ставится из файла, остальное — скачать и установить.
+    param([object[]]$Rows)
+    $map = Get-DreddLocalIpaMap
+    $apps = @($Rows | Where-Object { $_ } | ForEach-Object { [pscustomobject]@{ Id = $_.Id; Name = $_.Name; Local = $(if ($map[$_.Id]) { $map[$_.Id].Path } else { $null }) } })
+    Invoke-DreddInstallApps -Apps $apps -Purchase (ConvertTo-DreddBool $script:Ctx.Settings['AutoPurchase'])
+}
+
+function Get-DreddCatalogDownloaded {
+    # Строки, которые уже скачаны в той же (или более новой) версии. Версия в строке неизвестна — считаем скачанным.
+    param([object[]]$Rows, [hashtable]$Map)
+    return @($Rows | Where-Object {
+        $l = $Map[$_.Id]
+        $l -and (-not $_.Version -or (Compare-DreddVersion $l.Version $_.Version) -ge 0)
+    })
+}
+
 function Invoke-DreddCatalogDownload {
     $sel = @($script:UI.CatalogGrid.SelectedItems)
     if ($sel.Count -eq 0 -or -not (Test-DreddLoggedIn)) { return }
+    # Уже скачанное не качаем повторно молча (раньше каждое нажатие давало новый файл _2, _3…): спрашиваем.
+    $map = Get-DreddLocalIpaMap
+    $have = @(Get-DreddCatalogDownloaded -Rows $sel -Map $map)
+    if ($have.Count -gt 0) {
+        $names = ($have | ForEach-Object { '• {0} {1}' -f $_.Name, $map[$_.Id].Version }) -join "`n"
+        $buttons = @(@{ Key = 'cancel'; Text = (T 'Common.Cancel') }, @{ Key = 'again'; Text = (T 'Catalog.DownloadAgain') })
+        if ($script:Ctx.Binaries.IdeviceInstaller) { $buttons += @{ Key = 'install'; Text = (T 'Catalog.ToIphone'); Kind = 'Primary' } }
+        $choice = Show-DreddDialog -Title (T 'Catalog.AlreadyTitle') -Message ((T 'Catalog.AlreadyText') + "`n`n" + $names) -Kind Question -Buttons $buttons
+        if ($choice -eq 'install') { Invoke-DreddCatalogInstall $have; $sel = @($sel | Where-Object { $have -notcontains $_ }) }
+        elseif ($choice -ne 'again') { $sel = @($sel | Where-Object { $have -notcontains $_ }) }
+        if ($sel.Count -eq 0) { return }
+    }
     $purchase = ConvertTo-DreddBool $script:Ctx.Settings['AutoPurchase']
     foreach ($r in $sel) { Add-DreddDownloadItem -AppId $r.Id -AppName $r.Name -Purchase $purchase }
     Add-DreddLog -Level Info -Area 'Download' -Message (TF 'Log.Queued' @($sel.Count))

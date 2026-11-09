@@ -57,27 +57,41 @@
         </StackPanel>
 
         <StackPanel DockPanel.Dock="Top">
-          <RadioButton x:Name="NavPurchases" x:Uid="Nav.Purchases" Style="{StaticResource NavButton}" Tag="&#xE719;" IsChecked="True"/>
+          <RadioButton x:Name="NavHome" x:Uid="Nav.Home" Style="{StaticResource NavButton}" Tag="&#xE80F;" IsChecked="True"/>
+          <RadioButton x:Name="NavPurchases" x:Uid="Nav.Purchases" Style="{StaticResource NavButton}" Tag="&#xE719;"/>
           <RadioButton x:Name="NavCatalog" x:Uid="Nav.Catalog" Style="{StaticResource NavButton}" Tag="&#xE721;"/>
           <RadioButton x:Name="NavDownloads" x:Uid="Nav.Downloads" Style="{StaticResource NavButton}" Tag="&#xE896;"/>
           <RadioButton x:Name="NavLibrary" x:Uid="Nav.Library" Style="{StaticResource NavButton}" Tag="&#xE8B7;"/>
-          <RadioButton x:Name="NavDevices" x:Uid="Nav.Devices" Style="{StaticResource NavButton}" Tag="&#xE8EA;"/>
+          <!-- «Устройства» и «Apple ID» в меню не показываются: телефон — на «Главной», аккаунт — внизу. Экраны остаются. -->
+          <RadioButton x:Name="NavDevices" x:Uid="Nav.Devices" Style="{StaticResource NavButton}" Tag="&#xE8EA;" Visibility="Collapsed"/>
           <Border Height="1" Background="{DynamicResource Brush.Border}" Margin="18,10"/>
-          <RadioButton x:Name="NavAccounts" x:Uid="Nav.Accounts" Style="{StaticResource NavButton}" Tag="&#xE77B;"/>
+          <RadioButton x:Name="NavAccounts" x:Uid="Nav.Accounts" Style="{StaticResource NavButton}" Tag="&#xE77B;" Visibility="Collapsed"/>
           <RadioButton x:Name="NavSettings" x:Uid="Nav.Settings" Style="{StaticResource NavButton}" Tag="&#xE713;"/>
           <RadioButton x:Name="NavDiagnostics" x:Uid="Nav.Diagnostics" Style="{StaticResource NavButton}" Tag="&#xE9D9;"/>
         </StackPanel>
 
-        <!-- Аккаунт: по клику — страница Apple ID -->
-        <Button x:Name="SideAccountBtn" DockPanel.Dock="Bottom" Margin="8,0,8,10" Style="{StaticResource GhostButton}" HorizontalContentAlignment="Stretch" Padding="10,8" ToolTip="@Nav.Accounts">
-          <Grid Width="172">
+        <!-- Аккаунт: буква-аватарка, по клику — страница Apple ID -->
+        <Button x:Name="SideAccountBtn" DockPanel.Dock="Bottom" Margin="8,0,8,12" Style="{StaticResource GhostButton}" Padding="8,8" ToolTip="@Nav.Accounts">
+          <Grid Width="176">
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-            <Ellipse x:Name="SideAccountDot" Width="8" Height="8" Fill="{DynamicResource Brush.Warning}" VerticalAlignment="Top" Margin="0,5,10,0"/>
-            <StackPanel Grid.Column="1">
-              <TextBlock x:Name="SideAccountText" FontSize="12" HorizontalAlignment="Left"/>
+            <Grid Width="36" Height="36" Margin="0,0,10,0" VerticalAlignment="Center">
+              <Ellipse Fill="{DynamicResource Brush.AccentSoft}" Stroke="{DynamicResource Brush.Accent}" StrokeThickness="2"/>
+              <TextBlock x:Name="SideAvatarLetter" Text="?" FontSize="15" FontWeight="Bold" Foreground="{DynamicResource Brush.Accent}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              <!-- Точка-статус: зелёная — вход выполнен, жёлтая — нет. -->
+              <Ellipse x:Name="SideAccountDot" Width="11" Height="11" Fill="{DynamicResource Brush.Warning}" Stroke="{DynamicResource Brush.Sidebar}" StrokeThickness="2" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,-1,-1"/>
+            </Grid>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+              <TextBlock x:Name="SideAccountText" FontSize="13" HorizontalAlignment="Left"/>
               <TextBlock x:Name="SideAccountDetail" Style="{StaticResource Muted}" FontSize="11" HorizontalAlignment="Left" Margin="0,1,0,0"/>
             </StackPanel>
           </Grid>
+        </Button>
+        <!-- «На кофе»: та же ссылка, что «Поддержать PILOTDREDD» (настройка TipJarUrl) -->
+        <Button x:Name="SideTipBtn" DockPanel.Dock="Bottom" Margin="8,0,8,8" MinHeight="40" Background="{DynamicResource Brush.OrangeSoft}" BorderBrush="{DynamicResource Brush.OrangeBorder}" ToolTip="@Diag.TipJarHint">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="&#x2615;" FontFamily="Segoe UI Emoji, Segoe UI Symbol" FontSize="16" Foreground="{DynamicResource Brush.Orange}" VerticalAlignment="Center"/>
+            <TextBlock x:Uid="Side.TipJar" FontSize="15" Foreground="{DynamicResource Brush.Orange}" Margin="10,0,0,0" VerticalAlignment="Center"/>
+          </StackPanel>
         </Button>
       </DockPanel>
     </Border>
@@ -117,8 +131,215 @@
       <!-- ================= Страницы ================= -->
       <Grid Grid.Row="2" Margin="24,0,24,12">
 
+        <!-- ===== Главная ===== -->
+        <ScrollViewer x:Name="PageHome" VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="0,0,4,0">
+
+            <!-- Первые шаги: компоненты → Apple ID → iPhone -->
+            <Border x:Name="HomeSetupCard" Style="{StaticResource Card}" CornerRadius="12" Padding="20,18" Margin="0,0,0,14" Visibility="Collapsed">
+              <StackPanel>
+                <TextBlock x:Uid="Home.Setup.Title" FontSize="18" FontWeight="SemiBold"/>
+                <DockPanel Margin="0,10,0,14">
+                  <TextBlock x:Name="HomeSetupProgressText" Style="{StaticResource Muted}" FontSize="13" DockPanel.Dock="Left" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                  <ProgressBar x:Name="HomeSetupProgress" Maximum="3" Height="6" VerticalAlignment="Center"/>
+                </DockPanel>
+                <Border x:Name="HomeStep1" CornerRadius="10" Padding="14,12" Margin="0,0,0,8" Background="{DynamicResource Brush.Surface2}" BorderThickness="1" BorderBrush="Transparent">
+                  <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <Grid Width="34" Height="34" Margin="0,0,14,0" VerticalAlignment="Center">
+                      <Ellipse x:Name="HomeStep1Circle" StrokeThickness="2"/>
+                      <TextBlock x:Name="HomeStep1Num" Text="1" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Grid>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                      <TextBlock x:Uid="Home.Step1.Title" FontSize="15" FontWeight="SemiBold"/>
+                      <TextBlock x:Name="HomeStep1Text" Style="{StaticResource Muted}" FontSize="12" TextWrapping="Wrap" TextTrimming="None" Margin="0,2,0,0"/>
+                    </StackPanel>
+                    <Button x:Name="HomeStep1Btn" Grid.Column="2" MinWidth="120" MinHeight="36" Margin="12,0,0,0" VerticalAlignment="Center"><TextBlock x:Uid="Home.Step1.Action"/></Button>
+                    <TextBlock x:Name="HomeStep1Done" Grid.Column="2" x:Uid="Home.Step.Done" Foreground="{DynamicResource Brush.Success}" VerticalAlignment="Center" Margin="12,0,6,0"/>
+                  </Grid>
+                </Border>
+                <Border x:Name="HomeStep2" CornerRadius="10" Padding="14,12" Margin="0,0,0,8" Background="{DynamicResource Brush.Surface2}" BorderThickness="1" BorderBrush="Transparent">
+                  <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <Grid Width="34" Height="34" Margin="0,0,14,0" VerticalAlignment="Center">
+                      <Ellipse x:Name="HomeStep2Circle" StrokeThickness="2"/>
+                      <TextBlock x:Name="HomeStep2Num" Text="2" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Grid>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                      <TextBlock x:Uid="Home.Step2.Title" FontSize="15" FontWeight="SemiBold"/>
+                      <TextBlock x:Name="HomeStep2Text" Style="{StaticResource Muted}" FontSize="12" TextWrapping="Wrap" TextTrimming="None" Margin="0,2,0,0"/>
+                    </StackPanel>
+                    <Button x:Name="HomeStep2Btn" Grid.Column="2" MinWidth="120" MinHeight="36" Margin="12,0,0,0" VerticalAlignment="Center"><TextBlock x:Uid="Home.Step2.Action"/></Button>
+                    <TextBlock x:Name="HomeStep2Done" Grid.Column="2" x:Uid="Home.Step.Done" Foreground="{DynamicResource Brush.Success}" VerticalAlignment="Center" Margin="12,0,6,0"/>
+                  </Grid>
+                </Border>
+                <Border x:Name="HomeStep3" CornerRadius="10" Padding="14,12" Background="{DynamicResource Brush.Surface2}" BorderThickness="1" BorderBrush="Transparent">
+                  <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <Grid Width="34" Height="34" Margin="0,0,14,0" VerticalAlignment="Center">
+                      <Ellipse x:Name="HomeStep3Circle" StrokeThickness="2"/>
+                      <TextBlock x:Name="HomeStep3Num" Text="3" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Grid>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                      <TextBlock x:Uid="Home.Step3.Title" FontSize="15" FontWeight="SemiBold"/>
+                      <TextBlock x:Name="HomeStep3Text" Style="{StaticResource Muted}" FontSize="12" TextWrapping="Wrap" TextTrimming="None" Margin="0,2,0,0"/>
+                    </StackPanel>
+                    <Button x:Name="HomeStep3Btn" Grid.Column="2" MinWidth="120" MinHeight="36" Margin="12,0,0,0" VerticalAlignment="Center"><TextBlock x:Uid="Home.Step3.Action"/></Button>
+                    <TextBlock x:Name="HomeStep3Done" Grid.Column="2" x:Uid="Home.Step.Done" Foreground="{DynamicResource Brush.Success}" VerticalAlignment="Center" Margin="12,0,6,0"/>
+                  </Grid>
+                </Border>
+              </StackPanel>
+            </Border>
+
+            <!-- Карточка iPhone -->
+            <Border x:Name="HomeDevCard" Style="{StaticResource Card}" CornerRadius="12" Padding="20,18" Margin="0,0,0,14">
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <Border x:Name="HomePhoneShape" Width="54" Height="92" CornerRadius="12" BorderThickness="2" Margin="0,0,22,0" VerticalAlignment="Center"
+                        BorderBrush="{DynamicResource Brush.Accent}" Background="{DynamicResource Brush.AccentSoft}">
+                  <Border x:Name="HomePhoneNotch" Width="16" Height="5" CornerRadius="2.5" Background="{DynamicResource Brush.Accent}" VerticalAlignment="Top" Margin="0,6,0,0"/>
+                </Border>
+                <StackPanel x:Name="HomeDevInfo" Grid.Column="1" VerticalAlignment="Center">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock x:Name="HomeDevName" FontFamily="Segoe UI Variable Display, Segoe UI" FontSize="20" FontWeight="SemiBold" MaxWidth="420"/>
+                    <Border CornerRadius="10" Padding="9,2" Margin="10,0,0,0" Background="{DynamicResource Brush.SuccessSoft}" VerticalAlignment="Center">
+                      <StackPanel Orientation="Horizontal">
+                        <Ellipse Width="7" Height="7" Fill="{DynamicResource Brush.Success}" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="HomeDevConn" FontSize="12" Foreground="{DynamicResource Brush.Success}" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                      </StackPanel>
+                    </Border>
+                  </StackPanel>
+                  <TextBlock x:Name="HomeDevDetails" Style="{StaticResource Muted}" FontSize="13" Margin="0,4,0,0"/>
+                  <!-- Полоса не шире 460 и прижата влево: остаток забирает пустая вторая колонка
+                       (одна колонка с MaxWidth центрируется, как и StackPanel с MaxWidth). -->
+                  <Grid x:Name="HomeDevSpacePanel" Margin="0,10,0,0">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="100*" MaxWidth="460"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                    <StackPanel>
+                      <ProgressBar x:Name="HomeDevSpaceBar" Height="8" Maximum="100"/>
+                      <TextBlock x:Name="HomeDevSpaceText" Style="{StaticResource Muted}" FontSize="12" Margin="0,5,0,0"/>
+                    </StackPanel>
+                  </Grid>
+                </StackPanel>
+                <StackPanel x:Name="HomeNoDevInfo" Grid.Column="1" VerticalAlignment="Center" Visibility="Collapsed">
+                  <TextBlock x:Name="HomeNoDevTitle" FontFamily="Segoe UI Variable Display, Segoe UI" FontSize="20" FontWeight="SemiBold"/>
+                  <TextBlock x:Name="HomeNoDevText" Style="{StaticResource Muted}" FontSize="13" TextWrapping="Wrap" TextTrimming="None" Margin="0,4,0,0" MaxWidth="560" HorizontalAlignment="Left"/>
+                </StackPanel>
+                <StackPanel Grid.Column="2" Width="232" VerticalAlignment="Center" Margin="20,0,0,0">
+                  <Button x:Name="HomeInstallBtn" Style="{StaticResource PrimaryButton}" MinHeight="40">
+                    <TextBlock x:Uid="Home.InstallIpa" Foreground="{DynamicResource Brush.AccentText}"/>
+                  </Button>
+                  <Button x:Name="HomeScanBtn" Style="{StaticResource PrimaryButton}" MinHeight="40" Visibility="Collapsed">
+                    <TextBlock x:Uid="Home.ScanAgain" Foreground="{DynamicResource Brush.AccentText}"/>
+                  </Button>
+                  <Button x:Name="HomeDevicesBtn" Margin="0,8,0,0" MinHeight="34"><TextBlock x:Name="HomeDevicesBtnText"/></Button>
+                  <TextBlock x:Uid="Home.DropHint" Style="{StaticResource Muted}" FontSize="11" HorizontalAlignment="Center" Margin="0,8,0,0"/>
+                </StackPanel>
+              </Grid>
+            </Border>
+
+            <!-- Три плитки → вкладки «Покупок» -->
+            <UniformGrid Columns="3" Margin="0,0,0,14">
+              <Button x:Name="HomeTileMissing" Style="{StaticResource TileButton}" Margin="0,0,7,0">
+                <StackPanel>
+                  <Grid>
+                    <TextBlock x:Name="HomeTileMissingCount" Text="—" FontSize="30" FontWeight="SemiBold"/>
+                    <TextBlock Text="&#xE72A;" Style="{StaticResource Icon}" HorizontalAlignment="Right"/>
+                  </Grid>
+                  <TextBlock x:Uid="Home.Tile.Missing" FontSize="15" FontWeight="SemiBold" Margin="0,6,0,0"/>
+                  <TextBlock x:Name="HomeTileMissingText" Style="{StaticResource Muted}" FontSize="12" Margin="0,3,0,0"/>
+                </StackPanel>
+              </Button>
+              <Button x:Name="HomeTileOn" Style="{StaticResource TileButton}" Margin="7,0,7,0">
+                <StackPanel>
+                  <Grid>
+                    <TextBlock x:Name="HomeTileOnCount" Text="—" FontSize="30" FontWeight="SemiBold"/>
+                    <TextBlock Text="&#xE72A;" Style="{StaticResource Icon}" HorizontalAlignment="Right"/>
+                  </Grid>
+                  <TextBlock x:Uid="Home.Tile.On" FontSize="15" FontWeight="SemiBold" Margin="0,6,0,0"/>
+                  <TextBlock x:Name="HomeTileOnText" Style="{StaticResource Muted}" FontSize="12" Margin="0,3,0,0"/>
+                </StackPanel>
+              </Button>
+              <Button x:Name="HomeTileUpdate" Style="{StaticResource TileButton}" Margin="7,0,0,0" Background="{DynamicResource Brush.OrangeSoft}" BorderBrush="{DynamicResource Brush.OrangeBorder}">
+                <StackPanel>
+                  <Grid>
+                    <TextBlock x:Name="HomeTileUpdateCount" Text="—" FontSize="30" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Orange}"/>
+                    <TextBlock Text="&#xE72A;" Style="{StaticResource Icon}" Foreground="{DynamicResource Brush.Orange}" HorizontalAlignment="Right"/>
+                  </Grid>
+                  <TextBlock x:Uid="Home.Tile.Update" FontSize="15" FontWeight="SemiBold" Margin="0,6,0,0"/>
+                  <TextBlock x:Name="HomeTileUpdateText" Style="{StaticResource Muted}" FontSize="12" Margin="0,3,0,0"/>
+                </StackPanel>
+              </Button>
+            </UniformGrid>
+
+            <!-- Текущая загрузка и «Недавно» -->
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+              <Border x:Name="HomeDlCard" Style="{StaticResource Card}" CornerRadius="12" Padding="18,16" Margin="0,0,7,0" MinHeight="196">
+                <Grid>
+                  <StackPanel x:Name="HomeDlActive" Visibility="Collapsed">
+                    <DockPanel>
+                      <Button x:Name="HomeDlQueueLink" DockPanel.Dock="Right" Style="{StaticResource LinkButton}" VerticalAlignment="Center">
+                        <TextBlock x:Name="HomeDlQueueText" FontSize="12"/>
+                      </Button>
+                      <TextBlock x:Uid="Home.NowDownloading" FontSize="14" FontWeight="SemiBold"/>
+                    </DockPanel>
+                    <Grid Margin="0,14,0,0">
+                      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                      <Border Width="44" Height="44" CornerRadius="10" Background="{DynamicResource Brush.AccentSoft}" Margin="0,0,12,0">
+                        <TextBlock x:Name="HomeDlInitial" FontSize="18" FontWeight="Bold" Foreground="{DynamicResource Brush.Accent}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                      </Border>
+                      <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding AppName}" FontSize="15" FontWeight="SemiBold"/>
+                        <TextBlock Text="{Binding StatusText}" Style="{StaticResource Muted}" FontSize="12" Margin="0,2,0,0"/>
+                      </StackPanel>
+                      <TextBlock Grid.Column="2" Text="{Binding Progress, StringFormat={}{0:0}%}" FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Accent}" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                    </Grid>
+                    <ProgressBar Value="{Binding Progress, Mode=OneWay}" IsIndeterminate="{Binding IsIndeterminate, Mode=OneWay}" Maximum="100" Height="8" Margin="0,14,0,0"/>
+                    <DockPanel Margin="0,10,0,0">
+                      <Button x:Name="HomeDlCancelBtn" DockPanel.Dock="Right" x:Uid="Common.Cancel" MinWidth="84"/>
+                      <TextBlock Text="{Binding ProgressText}" Style="{StaticResource Muted}" FontSize="12" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                    </DockPanel>
+                  </StackPanel>
+                  <StackPanel x:Name="HomeDlEmpty" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <TextBlock Text="&#xE896;" Style="{StaticResource Icon}" FontSize="30" HorizontalAlignment="Center"/>
+                    <TextBlock x:Uid="Home.QueueEmpty" Style="{StaticResource EmptyTitle}" Margin="0,10,0,0"/>
+                    <TextBlock x:Uid="Home.QueueEmptyText" Style="{StaticResource Muted}" FontSize="12" TextWrapping="Wrap" TextTrimming="None" TextAlignment="Center" MaxWidth="300" Margin="0,4,0,8"/>
+                    <Button x:Name="HomeOpenPurchasesBtn" Style="{StaticResource LinkButton}" HorizontalAlignment="Center"><TextBlock x:Uid="Home.OpenPurchases"/></Button>
+                  </StackPanel>
+                </Grid>
+              </Border>
+              <Border Grid.Column="1" Style="{StaticResource Card}" CornerRadius="12" Padding="18,16" Margin="7,0,0,0" MinHeight="196">
+                <StackPanel>
+                  <DockPanel>
+                    <Button x:Name="HomeAllDownloadsBtn" DockPanel.Dock="Right" Style="{StaticResource LinkButton}" VerticalAlignment="Center"><TextBlock x:Uid="Home.AllDownloads" FontSize="12"/></Button>
+                    <TextBlock x:Uid="Home.Recent" FontSize="14" FontWeight="SemiBold"/>
+                  </DockPanel>
+                  <ItemsControl x:Name="HomeRecentList" Margin="0,12,0,0" Focusable="False">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <Grid Margin="0,0,0,10" ToolTip="{Binding Detail}">
+                          <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                          <Border Width="34" Height="34" CornerRadius="8" Background="{DynamicResource Brush.Surface2}" Margin="0,0,12,0">
+                            <TextBlock Text="{Binding C1}" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                          </Border>
+                          <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding C2}" FontSize="13"/>
+                            <TextBlock Text="{Binding C3}" Style="{StaticResource Muted}" FontSize="11" Margin="0,1,0,0"/>
+                          </StackPanel>
+                          <TextBlock Grid.Column="2" Text="{Binding C5}" Style="{StaticResource StatusText}" FontSize="12" VerticalAlignment="Center" Margin="10,0,0,0"/>
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                  <TextBlock x:Name="HomeRecentEmpty" x:Uid="Home.RecentEmpty" Style="{StaticResource Muted}" FontSize="12" Margin="0,6,0,0"/>
+                </StackPanel>
+              </Border>
+            </Grid>
+          </StackPanel>
+        </ScrollViewer>
+
         <!-- ===== Покупки ===== -->
-        <Grid x:Name="PagePurchases">
+        <Grid x:Name="PagePurchases" Visibility="Collapsed">
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -161,6 +382,7 @@
                   <ContextMenu x:Name="PurMenu">
                     <MenuItem x:Name="PurMenuDownload" x:Uid="Purchases.Download" InputGestureText="Enter"/>
                     <MenuItem x:Name="PurMenuInstall" Header="—"/>
+                    <MenuItem x:Name="PurMenuUninstall" x:Uid="Purchases.Uninstall"/>
                     <MenuItem x:Name="PurMenuVersion" x:Uid="Catalog.ChooseVersion"/>
                     <MenuItem x:Name="PurMenuShow" x:Uid="Common.ShowInFolder"/>
                     <Separator/>
@@ -235,6 +457,10 @@
             </Grid.ColumnDefinitions>
             <TextBlock x:Name="PurSelText" Style="{StaticResource Muted}" VerticalAlignment="Center"/>
             <StackPanel Grid.Column="1" Orientation="Horizontal">
+              <!-- Видна, только когда выбраны приложения, которые стоят на iPhone (после «Сравнить с iPhone»). -->
+              <Button x:Name="PurUninstallBtn" Style="{StaticResource DangerButton}" Margin="0,0,8,0" Visibility="Collapsed">
+                <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE74D;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" VerticalAlignment="Center"/><TextBlock x:Name="PurUninstallText" Margin="8,0,0,0"/></StackPanel>
+              </Button>
               <Button x:Name="PurRetryBtn" x:Uid="Purchases.RetryFailed" Margin="0,0,8,0"/>
               <Button x:Name="PurShowFileBtn" x:Uid="Common.ShowInFolder" Margin="0,0,8,0"/>
               <Button x:Name="PurVersionBtn" x:Uid="Catalog.ChooseVersion" Margin="0,0,8,0"/>
@@ -269,8 +495,8 @@
             <Button x:Name="CatalogCancelBtn" Grid.Column="2" x:Uid="Common.Cancel" Margin="8,0,0,0" Visibility="Collapsed"/>
           </Grid>
           <WrapPanel Grid.Row="1" Margin="2,0,0,6">
-            <RadioButton x:Name="SrcSearch" x:Uid="Catalog.SrcAll" Style="{StaticResource FilterTab}" GroupName="CatalogSrc" IsChecked="True"/>
-            <RadioButton x:Name="SrcPopular" x:Uid="Catalog.SrcPopular" Style="{StaticResource FilterTab}" GroupName="CatalogSrc"/>
+            <RadioButton x:Name="SrcPopular" x:Uid="Catalog.SrcPopular" Style="{StaticResource FilterTab}" GroupName="CatalogSrc" IsChecked="True"/>
+            <RadioButton x:Name="SrcSearch" x:Uid="Catalog.SrcAll" Style="{StaticResource FilterTab}" GroupName="CatalogSrc"/>
             <RadioButton x:Name="SrcCustom" x:Uid="Catalog.SrcCustom" Style="{StaticResource FilterTab}" GroupName="CatalogSrc"/>
           </WrapPanel>
           <Border Grid.Row="2" Style="{StaticResource Card}" Padding="4">
@@ -329,6 +555,10 @@
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal">
               <Button x:Name="CatalogVersionBtn" x:Uid="Catalog.ChooseVersion" Margin="0,0,8,0"/>
+              <!-- «Скачать» кладёт IPA только на компьютер — установка на телефон отдельной заметной кнопкой. -->
+              <Button x:Name="CatalogInstallBtn" Margin="0,0,8,0">
+                <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE8EA;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" VerticalAlignment="Center"/><TextBlock x:Uid="Catalog.ToIphone" Margin="8,0,0,0"/></StackPanel>
+              </Button>
               <Button x:Name="CatalogDownloadBtn" Style="{StaticResource PrimaryButton}">
                 <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE896;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Foreground="{DynamicResource Brush.AccentText}" VerticalAlignment="Center"/><TextBlock x:Uid="Catalog.Download" Margin="8,0,0,0" Foreground="{DynamicResource Brush.AccentText}"/></StackPanel>
               </Button>

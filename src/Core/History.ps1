@@ -130,10 +130,10 @@ function Remove-DreddHistoryEntries {
 }
 
 function Add-DreddHistoryEntry {
-    # Kind: Download | Purchase | Install. Хранятся последние 500 записей. Email аккаунта маскируется.
+    # Kind: Download | Purchase | Install | Uninstall. Хранятся последние 500 записей. Email аккаунта маскируется.
     param(
         [Parameter(Mandatory)]$Context,
-        [ValidateSet('Download', 'Purchase', 'Install')][string]$Kind = 'Download',
+        [ValidateSet('Download', 'Purchase', 'Install', 'Uninstall')][string]$Kind = 'Download',
         [string]$AppId, [string]$Name, [string]$Version, [string]$Account, [string]$File, [string]$Target,
         [ValidateSet('Success', 'Error', 'Cancelled')][string]$Result = 'Success', [string]$Message
     )

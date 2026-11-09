@@ -25,7 +25,8 @@ function Initialize-LibraryPage {
     $u.LibDeleteBtn.Add_Click({ Safe { Remove-DreddLibraryItems } })
     $u.LibInstallBtn.Add_Click({ Safe { Invoke-DreddInstallFromLibrary } })
 
-    # Перетаскивание .ipa в окно: на экране «Устройства» — установка без копирования, на остальных — в библиотеку.
+    # Перетаскивание .ipa в окно: на «Главной» — сразу установка на iPhone; на «Устройствах» — в список установки
+    # без копирования; на остальных — в библиотеку.
     $script:Window.Add_DragOver({ param($s, $e)
         $e.Effects = if (@(Get-DreddDroppedIpas $e).Count -gt 0) { [System.Windows.DragDropEffects]::Copy } else { [System.Windows.DragDropEffects]::None }
         $e.Handled = $true
@@ -33,7 +34,8 @@ function Initialize-LibraryPage {
     $script:Window.Add_Drop({ param($s, $e) Safe {
         $files = @(Get-DreddDroppedIpas $e)
         if ($files.Count -eq 0) { return }
-        if ($script:CurrentPage -eq 'Devices') { Add-DreddExternalIpas $files -Select }
+        if ($script:CurrentPage -eq 'Home') { Invoke-DreddInstallFiles $files }
+        elseif ($script:CurrentPage -eq 'Devices') { Add-DreddExternalIpas $files -Select }
         else { Import-DreddIpaFiles $files }
     } })
     Update-LibraryDetails
