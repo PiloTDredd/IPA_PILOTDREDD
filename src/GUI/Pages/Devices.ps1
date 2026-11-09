@@ -43,6 +43,7 @@ function Update-DevicesTexts {
         $r.ConnectionText = if ($r.Connection) { T "Device.Conn.$($r.Connection)" } else { '' }
     }
     Update-DevicesButtons
+    Update-DreddHome
 }
 
 function Update-DevicesButtons {
@@ -67,7 +68,7 @@ function Start-DreddDeviceScan {
         foreach ($d in @($r.Devices)) {
             if ($null -eq $d) { continue }
             $row = New-Object IPADredd.Gui.DeviceRow
-            $row.Name = $d.Name; $row.Model = $d.ProductType; $row.IosVersion = $d.iOSVersion; $row.Udid = $d.UDID
+            $row.Name = $d.Name; $row.Model = ConvertTo-DreddModelName $d.ProductType; $row.IosVersion = $d.iOSVersion; $row.Udid = $d.UDID
             $row.Status = $d.Status; $row.Detail = $d.Detail
             $row.Connection = $d.Connection
             $script:DeviceRows.Add($row)

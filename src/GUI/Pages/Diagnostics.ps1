@@ -178,6 +178,7 @@ function Start-DreddToolUpdate {
             Show-DreddToast -Kind Error -Title (T 'Update.Failed') -Text (Get-DreddErrorText $res.ErrorKey $res.Message)
         } else { Hide-DreddToast }
         if ($script:CurrentPage -eq 'Diagnostics') { Update-DiagnosticsPage }
+        Update-DreddHome
     } -OnError {
         param($m)
         $script:UpdateTask = $null

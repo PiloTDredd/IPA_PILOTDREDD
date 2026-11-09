@@ -757,12 +757,47 @@ Test 'Devices: Wi-Fi devices are found with -n; a device on cable and Wi-Fi is l
         Assert-Equal 'network' $wifi.Connection
         Assert-Equal 'Test iPad' $wifi.Name 'Wi-Fi device info must be read with -n.'
         Assert-Equal '16.7' $wifi.iOSVersion
+        Assert-Equal 128000000000 $usb.DiskTotal 'storage of the cable device'
+        Assert-Equal 41200000000 $usb.DiskFree
+        Assert-Equal 20000000000 $wifi.DiskFree 'storage over Wi-Fi must be read with -n.'
         $env:FAKE_WIFI_DEVICE = 'both'
         $r2 = Get-DreddDevices -Context $ctx
         Assert-Equal 1 @($r2.Devices).Count 'a device visible by cable and Wi-Fi must be listed once.'
         Assert-Equal 'usb' $r2.Devices[0].Connection
     } finally { $env:FAKE_WIFI_DEVICE = $null }
     Assert-Equal 2 @(ConvertFrom-DreddUdidList "00008110-000A1B2C3D4E5F60 (USB)`r`n00008030-00112233445566AA (Network)`r`nERROR: x").Count
+}
+
+Test 'Uninstall from the device: bundle id passed, ERROR text is a failure, bad bundle id rejected' {
+    $ctx = New-DeviceContext
+    $env:FAKE_INSTALL_LOG = Join-Path $TestRoot ('uninst_' + [guid]::NewGuid().ToString('N').Substring(0, 6) + '.log')
+    try {
+        $r = Uninstall-DreddApp -Context $ctx -BundleId 'com.example.fake' -UDID '00008110-000A1B2C3D4E5F60'
+        Assert-True $r.Ok "uninstall failed: $($r.ErrorKey) $($r.Message)"
+        Assert-True ([System.IO.File]::ReadAllText($env:FAKE_INSTALL_LOG) -match '-u 00008110-000A1B2C3D4E5F60 uninstall com\.example\.fake') 'ideviceinstaller arguments'
+        $env:FAKE_UNINSTALL_FAIL = '1'
+        $r2 = Uninstall-DreddApp -Context $ctx -BundleId 'com.example.fake' -UDID '00008110-000A1B2C3D4E5F60'
+        Assert-True (-not $r2.Ok) 'ERROR in the output with exit code 0 must be a failure.'
+        Assert-Equal 'Err.UninstallFailed' $r2.ErrorKey
+        $r3 = Uninstall-DreddApp -Context $ctx -BundleId 'x & calc' -UDID '00008110-000A1B2C3D4E5F60'
+        Assert-True (-not $r3.Ok) 'a bundle id with spaces and & must be rejected.'
+    } finally { $env:FAKE_UNINSTALL_FAIL = $null; Remove-Item $env:FAKE_INSTALL_LOG -ErrorAction SilentlyContinue; $env:FAKE_INSTALL_LOG = $null }
+}
+
+Test 'Device model names: known iPhones by ProductType, unknown as is' {
+    Assert-Equal 'iPhone 15 Pro Max' (ConvertTo-DreddModelName 'iPhone16,2')
+    Assert-Equal 'iPhone 14 Pro' (ConvertTo-DreddModelName 'iPhone15,2')
+    Assert-Equal 'iPad13,1' (ConvertTo-DreddModelName 'iPad13,1')
+    Assert-Equal '' (ConvertTo-DreddModelName '')
+}
+
+Test 'Devices: disk usage parsing tolerates missing and odd keys' {
+    $a = ConvertFrom-DreddDiskUsage "TotalDataCapacity: 100`r`nTotalDataAvailable: 40`r`n"
+    Assert-Equal 100 $a.Total; Assert-Equal 40 $a.Free
+    $b = ConvertFrom-DreddDiskUsage 'ERROR: Could not connect to lockdownd'
+    Assert-Equal 0 $b.Total; Assert-Equal 0 $b.Free
+    $c = ConvertFrom-DreddDiskUsage "TotalDiskCapacity: 10`nAmountDataAvailable: 50"
+    Assert-Equal 0 $c.Free 'free space larger than the disk is nonsense.'
 }
 
 Test 'Install over Wi-Fi passes -n to ideviceinstaller' {

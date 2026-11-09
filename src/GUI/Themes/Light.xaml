@@ -16,6 +16,10 @@
   <SolidColorBrush x:Key="Brush.WarningSoft" Color="#FBF1DE"/>
   <SolidColorBrush x:Key="Brush.Danger" Color="#C93C3C"/>
   <SolidColorBrush x:Key="Brush.DangerSoft" Color="#FBE7E7"/>
+  <SolidColorBrush x:Key="Brush.Orange" Color="#B5520F"/>
+  <SolidColorBrush x:Key="Brush.OrangeSoft" Color="#FDF0E5"/>
+  <SolidColorBrush x:Key="Brush.OrangeBorder" Color="#F2C6A0"/>
+  <SolidColorBrush x:Key="Brush.SuccessSoft" Color="#E3F4EA"/>
   <SolidColorBrush x:Key="Brush.Hover" Color="#EBEDF0"/>
   <SolidColorBrush x:Key="Brush.Selected" Color="#DCE7FA"/>
   <SolidColorBrush x:Key="Brush.LogBg" Color="#FAFAFB"/>

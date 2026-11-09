@@ -6,8 +6,8 @@ $script:LocEntries = New-Object System.Collections.Generic.List[object]
 $script:Strings = @{}
 $script:LogLines = New-Object System.Collections.Generic.List[object]
 $script:ThemeCache = @{}
-$script:CurrentPage = 'Purchases'
-$script:Pages = @('Purchases', 'Catalog', 'Downloads', 'Library', 'Devices', 'Accounts', 'Settings', 'Diagnostics')
+$script:CurrentPage = 'Home'
+$script:Pages = @('Home', 'Purchases', 'Catalog', 'Downloads', 'Library', 'Devices', 'Accounts', 'Settings', 'Diagnostics')
 
 function Initialize-DreddApplication {
     Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Xaml, System.Windows.Forms
@@ -344,7 +344,7 @@ function Get-DreddErrorText {
 # ---------------- Навигация ----------------
 
 function Show-DreddPage {
-    param([ValidateSet('Purchases', 'Catalog', 'Downloads', 'Library', 'Devices', 'Accounts', 'Settings', 'Diagnostics')][string]$Name)
+    param([ValidateSet('Home', 'Purchases', 'Catalog', 'Downloads', 'Library', 'Devices', 'Accounts', 'Settings', 'Diagnostics')][string]$Name)
     foreach ($p in $script:Pages) {
         $script:UI["Page$p"].Visibility = if ($p -eq $Name) { 'Visible' } else { 'Collapsed' }
     }

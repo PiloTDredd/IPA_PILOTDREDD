@@ -17,6 +17,11 @@
   <SolidColorBrush x:Key="Brush.WarningSoft" Color="#2E2719"/>
   <SolidColorBrush x:Key="Brush.Danger" Color="#EC6A6A"/>
   <SolidColorBrush x:Key="Brush.DangerSoft" Color="#341F21"/>
+  <!-- Второй цвет аватарки: «Обновить», «На кофе». -->
+  <SolidColorBrush x:Key="Brush.Orange" Color="#FF8A3D"/>
+  <SolidColorBrush x:Key="Brush.OrangeSoft" Color="#2A2119"/>
+  <SolidColorBrush x:Key="Brush.OrangeBorder" Color="#5A3A20"/>
+  <SolidColorBrush x:Key="Brush.SuccessSoft" Color="#1A2E25"/>
   <SolidColorBrush x:Key="Brush.Hover" Color="#23272C"/>
   <SolidColorBrush x:Key="Brush.Selected" Color="#243246"/>
   <SolidColorBrush x:Key="Brush.LogBg" Color="#131518"/>

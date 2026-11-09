@@ -78,6 +78,7 @@ function Update-DownloadsHistory {
     $script:UI.DlHistoryGrid.ItemsSource = $rows
     $script:UI.DlHistoryClearBtn.IsEnabled = $rows.Count -gt 0
     Update-DownloadsHistoryButtons
+    Update-DreddHome 'Recent'
 }
 
 function Update-DownloadsHistoryButtons {
@@ -107,6 +108,7 @@ function Set-DreddQueueStatus {
     $Item.ShowProgress = ($Status -eq 'Running')
     if (Get-Command Update-DreddPurchaseFromQueue -ErrorAction SilentlyContinue) { Update-DreddPurchaseFromQueue $Item }
     Save-DreddQueueState
+    Update-DreddHome 'Download'
 }
 
 # ---------------- Очередь между запусками ----------------

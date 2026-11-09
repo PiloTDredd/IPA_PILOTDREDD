@@ -59,7 +59,7 @@ Import-Module $coreModule -Force -DisableNameChecking
 . (Join-Path $PSScriptRoot 'src/GUI/TaskRunner.ps1')
 # Сборки WPF и классы строк (ViewModels.cs) нужны до подключения страниц: они создают коллекции этих типов.
 Initialize-DreddApplication
-foreach ($page in 'Shell', 'Purchases', 'Catalog', 'Downloads', 'Library', 'Devices', 'Accounts', 'Settings', 'Diagnostics') {
+foreach ($page in 'Shell', 'Home', 'Purchases', 'Catalog', 'Downloads', 'Library', 'Devices', 'Accounts', 'Settings', 'Diagnostics') {
     . (Join-Path $PSScriptRoot "src/GUI/Pages/$page.ps1")
 }
 
@@ -88,6 +88,7 @@ Set-DreddTheme $script:Ctx.Settings['Theme']
 Initialize-DreddTaskRunner -CoreModulePath $coreModule
 
 # ---- Навигация и журнал ----
+$script:UI.NavHome.Add_Checked({ Safe { if ($script:CurrentPage -ne 'Home') { Show-DreddPage 'Home' } } })
 $script:UI.NavPurchases.Add_Checked({ Safe { if ($script:CurrentPage -ne 'Purchases') { Show-DreddPage 'Purchases' } } })
 $script:UI.NavCatalog.Add_Checked({ Safe { if ($script:CurrentPage -ne 'Catalog') { Show-DreddPage 'Catalog' } } })
 $script:UI.NavDownloads.Add_Checked({ Safe { if ($script:CurrentPage -ne 'Downloads') { Show-DreddPage 'Downloads' } } })
@@ -107,6 +108,7 @@ $script:UI.LogOpenBtn.Add_Click({ Safe {
 
 Initialize-DreddToast
 Initialize-ShellPage
+Initialize-HomePage
 Initialize-PurchasesPage
 Initialize-CatalogPage
 Initialize-DownloadsPage
@@ -119,7 +121,7 @@ Initialize-DiagnosticsPage
 Update-DreddBusyIndicator
 Update-DreddAccountUi
 Update-DreddShell
-Show-DreddPage 'Purchases'
+Show-DreddPage 'Home'
 Add-DreddLog -Level Info -Area 'App' -Message (TF 'Log.Started' @($script:Ctx.Version, $script:Ctx.Platform.OSDescription, $script:Ctx.Platform.PSVersion))
 if (-not $script:Ctx.Binaries.Ipatool) { Add-DreddLog -Level Error -Area 'App' -Message (T 'Err.NoIpatool') }
 else { Add-DreddLog -Level Info -Area 'App' -Message (TF 'Dash.BinarySource' @((T "Source.$($script:Ctx.Binaries.RootSource)"))) }
@@ -202,6 +204,7 @@ if ($SelfTest -or $Screenshot) {
             }
             Update-DreddPurchaseStatuses
             $shots = @(
+                @{ Theme = 'Dark'; Page = 'Home'; Name = 'home_dark' }, @{ Theme = 'Light'; Page = 'Home'; Name = 'home_light' },
                 @{ Theme = 'Dark'; Page = 'Purchases'; Name = 'purchases_dark' }, @{ Theme = 'Light'; Page = 'Purchases'; Name = 'purchases_light' },
                 @{ Theme = 'Dark'; Page = 'Purchases'; Tab = 'PurTabMissing'; Name = 'purchases_removed' },
                 @{ Theme = 'Dark'; Page = 'Purchases'; Tab = 'PurTabNotOnDevice'; Name = 'purchases_not_on_iphone' },
@@ -356,6 +359,8 @@ if ($SelfTest -or $Screenshot) {
                 $n1 = $script:PurchaseById['1111111']; $n2 = $script:PurchaseById['2222222']
                 if ($n2.DeviceState -ne 'Installed') { $errors.Add("scenario: app with App Store ID on the device is '$($n2.DeviceState)'") }
                 if ($n1.DeviceState -ne 'Missing') { $errors.Add("scenario: app missing on the device is '$($n1.DeviceState)'") }
+                # «Удалить с iPhone» доступно для стоящего на телефоне (bundle id с устройства) и недоступно для отсутствующего.
+                if (@(Get-DreddPurchaseOnDevice @($n2, $n1)).Count -ne 1) { $errors.Add('scenario: Remove from iPhone must apply only to the app on the device') }
                 if (-not $script:UI.PurTabNotOnDevice.IsChecked -or $script:UI.PurGrid.Items.Count -ne 1) { $errors.Add("scenario: 'Not on iPhone' tab shows $($script:UI.PurGrid.Items.Count) rows") }
                 if ($script:PurDeviceColumn.Visibility -ne 'Visible') { $errors.Add('scenario: On iPhone column hidden') }
                 if ($Screenshot) { Wait-DreddUi 300; Save-DreddScreenshot (Join-Path $Screenshot 'Scenario_DeviceCompare.png') }

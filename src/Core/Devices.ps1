@@ -36,6 +36,19 @@ function ConvertFrom-DreddUdidList {
     return @($Text -split "`r?`n" | ForEach-Object { ($_.Trim() -split '\s+')[0] } | Where-Object { $_ -match '^[0-9A-Fa-f-]{20,}$' } | Select-Object -Unique)
 }
 
+function ConvertFrom-DreddDiskUsage {
+    # Вывод «ideviceinfo -q com.apple.disk_usage» → @{ Total; Free } в байтах (0 — неизвестно).
+    param([string]$Text)
+    $v = @{}
+    foreach ($line in ([string]$Text -split "`r?`n")) {
+        if ($line -match '^(\w+):\s*(\d+)\s*$') { $v[$Matches[1]] = [long]$Matches[2] }
+    }
+    $total = if ($v.ContainsKey('TotalDiskCapacity')) { $v['TotalDiskCapacity'] } elseif ($v.ContainsKey('TotalDataCapacity')) { $v['TotalDataCapacity'] } else { 0L }
+    $free = if ($v.ContainsKey('AmountDataAvailable')) { $v['AmountDataAvailable'] } elseif ($v.ContainsKey('TotalDataAvailable')) { $v['TotalDataAvailable'] } else { 0L }
+    if ($free -gt $total) { $free = 0L; $total = 0L }
+    return @{ Total = [long]$total; Free = [long]$free }
+}
+
 function Get-DreddDevices {
     <#
       Список подключённых устройств: UDID, Name, ProductType, iOSVersion, Status (Ready | NotTrusted | Error), Detail,
@@ -70,7 +83,7 @@ function Get-DreddDevices {
         if ($null -ne $CancellationToken -and $CancellationToken.IsCancellationRequested) { break }
         $udid = $f.Udid
         $netArg = @(if ($f.Conn -eq 'network') { '-n' })
-        $d = [ordered]@{ UDID = $udid; Name = $null; ProductType = $null; iOSVersion = $null; DeviceClass = $null; Status = 'Ready'; Detail = ''; Connection = $f.Conn }
+        $d = [ordered]@{ UDID = $udid; Name = $null; ProductType = $null; iOSVersion = $null; DeviceClass = $null; Status = 'Ready'; Detail = ''; Connection = $f.Conn; DiskTotal = 0L; DiskFree = 0L }
         if ($f.Conn -eq 'usb') {
             # Имя по сети даёт ideviceinfo (DeviceName), отдельный запрос idevice_id не нужен.
             $n = Invoke-DreddProcess -FilePath $b.IdeviceId -ArgumentList @($udid) -TimeoutSec 15 -CancellationToken $CancellationToken -Environment $env1
@@ -93,6 +106,14 @@ function Get-DreddDevices {
                 $txt = (Protect-LogText $i.Output).Trim()
                 $d.Detail = $txt
                 if ($txt -match '(?i)(pair|trust|lockdown|password protected|invalid host)') { $d.Status = 'NotTrusted' } else { $d.Status = 'Error' }
+            }
+            # Память телефона (карточка на «Главной»). Не удалось — не ошибка: просто не показываем.
+            if ($d.Status -eq 'Ready') {
+                $q = Invoke-DreddProcess -FilePath $b.IdeviceInfo -ArgumentList ($netArg + @('-q', 'com.apple.disk_usage', '-u', $udid)) -TimeoutSec 15 -CancellationToken $CancellationToken -Environment $env1
+                if ($q.ExitCode -eq 0) {
+                    $du = ConvertFrom-DreddDiskUsage $q.StdOut
+                    $d.DiskTotal = $du.Total; $d.DiskFree = $du.Free
+                }
             }
         }
         if (-not $d.Name) { $d.Name = 'iOS device' }
@@ -181,6 +202,69 @@ function Install-DreddIpa {
     } finally {
         try { if ([System.IO.Directory]::Exists($temp)) { [System.IO.Directory]::Delete($temp, $true) } } catch { }
     }
+}
+
+function Uninstall-DreddApp {
+    <#
+      Удаление приложения с устройства по bundle id — как удаление на самом iPhone, вместе с данными приложения.
+      Результат: Ok, ErrorKey, Message, Output.
+    #>
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][string]$BundleId,
+        [string]$UDID,
+        $Reporter,
+        $CancellationToken
+    )
+    $inst = $Context.Binaries.IdeviceInstaller
+    if (-not $inst) { return [pscustomobject]@{ Ok = $false; ErrorKey = 'Err.NoInstaller'; Message = ''; Output = '' } }
+    # Bundle id идёт в командную строку — только допустимые символы.
+    if ($BundleId -notmatch '^[A-Za-z0-9][A-Za-z0-9.\-_]*$') { return [pscustomobject]@{ Ok = $false; ErrorKey = 'Err.UninstallFailed'; Message = $BundleId; Output = '' } }
+    $env1 = Get-DreddDeviceToolEnv $Context
+    $baseArgs = @()
+    $conn = $null
+    if ($UDID) {
+        $conn = Wait-DreddDeviceConnection -Context $Context -Udid $UDID -TimeoutSec 10 -CancellationToken $CancellationToken
+        if (-not $conn) {
+            if ($null -ne $CancellationToken -and $CancellationToken.IsCancellationRequested) { return [pscustomobject]@{ Ok = $false; ErrorKey = 'Err.Cancelled'; Message = ''; Output = '' } }
+            return [pscustomobject]@{ Ok = $false; ErrorKey = 'Err.DeviceGone'; Message = "No device found with udid $UDID"; Output = '' }
+        }
+        $baseArgs = @('-u', $UDID)
+        if ($conn -eq 'network') { $baseArgs += '-n' }
+    }
+    $r = Invoke-DreddProcess -FilePath $inst -ArgumentList ($baseArgs + @('uninstall', $BundleId)) -TimeoutSec 180 -CancellationToken $CancellationToken -Environment $env1
+    if ($r.Cancelled) { return [pscustomobject]@{ Ok = $false; ErrorKey = 'Err.Cancelled'; Message = ''; Output = $r.Output } }
+    Write-DreddReport -Reporter $Reporter -Type log -Level Debug -Area 'Uninstall' -Message ((Protect-LogText $r.Output).Trim())
+    if ($r.ExitCode -eq 0 -and $r.Output -notmatch '(?im)^\s*(ERROR|Error:)') {
+        return [pscustomobject]@{ Ok = $true; ErrorKey = $null; Message = ''; Output = (Protect-LogText $r.Output) }
+    }
+    $msg = (Protect-LogText $r.Output).Trim()
+    $key = Get-DreddDeviceErrorKey -Text $msg -Connection $conn
+    if (-not $key) { $key = 'Err.UninstallFailed' }
+    return [pscustomobject]@{ Ok = $false; ErrorKey = $key; Message = (@($msg -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -Last 1) -join ''); Output = $msg }
+}
+
+function ConvertTo-DreddModelName {
+    # ProductType → название модели: iPhone16,2 → «iPhone 15 Pro Max». Неизвестное (новые модели, iPad) — как есть.
+    param([string]$ProductType)
+    if (-not $ProductType) { return '' }
+    $n = $script:DreddModelNames[$ProductType]
+    if ($n) { return $n }
+    return $ProductType
+}
+
+$script:DreddModelNames = @{
+    'iPhone10,1' = 'iPhone 8'; 'iPhone10,4' = 'iPhone 8'; 'iPhone10,2' = 'iPhone 8 Plus'; 'iPhone10,5' = 'iPhone 8 Plus'
+    'iPhone10,3' = 'iPhone X'; 'iPhone10,6' = 'iPhone X'
+    'iPhone11,2' = 'iPhone XS'; 'iPhone11,4' = 'iPhone XS Max'; 'iPhone11,6' = 'iPhone XS Max'; 'iPhone11,8' = 'iPhone XR'
+    'iPhone12,1' = 'iPhone 11'; 'iPhone12,3' = 'iPhone 11 Pro'; 'iPhone12,5' = 'iPhone 11 Pro Max'; 'iPhone12,8' = 'iPhone SE (2nd gen)'
+    'iPhone13,1' = 'iPhone 12 mini'; 'iPhone13,2' = 'iPhone 12'; 'iPhone13,3' = 'iPhone 12 Pro'; 'iPhone13,4' = 'iPhone 12 Pro Max'
+    'iPhone14,4' = 'iPhone 13 mini'; 'iPhone14,5' = 'iPhone 13'; 'iPhone14,2' = 'iPhone 13 Pro'; 'iPhone14,3' = 'iPhone 13 Pro Max'
+    'iPhone14,6' = 'iPhone SE (3rd gen)'; 'iPhone14,7' = 'iPhone 14'; 'iPhone14,8' = 'iPhone 14 Plus'
+    'iPhone15,2' = 'iPhone 14 Pro'; 'iPhone15,3' = 'iPhone 14 Pro Max'; 'iPhone15,4' = 'iPhone 15'; 'iPhone15,5' = 'iPhone 15 Plus'
+    'iPhone16,1' = 'iPhone 15 Pro'; 'iPhone16,2' = 'iPhone 15 Pro Max'
+    'iPhone17,1' = 'iPhone 16 Pro'; 'iPhone17,2' = 'iPhone 16 Pro Max'; 'iPhone17,3' = 'iPhone 16'; 'iPhone17,4' = 'iPhone 16 Plus'; 'iPhone17,5' = 'iPhone 16e'
+    'iPhone18,1' = 'iPhone 17 Pro'; 'iPhone18,2' = 'iPhone 17 Pro Max'; 'iPhone18,3' = 'iPhone 17'; 'iPhone18,4' = 'iPhone Air'
 }
 
 # Нет связи с устройством (а не отказ установки): пропало из usbmuxd или по Wi-Fi не отвечает lockdownd.
@@ -370,11 +454,12 @@ function Compare-DreddDeviceApps {
         if ($dev) {
             $state = 'Installed'
             if ($a.Lookup -eq 'Found' -and (Compare-DreddVersion $dev.Version $a.Version) -eq -1) { $state = 'Outdated' }
-            $res[$id] = [pscustomobject]@{ State = $state; DeviceVersion = [string]$dev.Version }
+            # DeviceBundleId — bundle id так, как его знает iPhone (нужен для «Удалить с iPhone»).
+            $res[$id] = [pscustomobject]@{ State = $state; DeviceVersion = [string]$dev.Version; DeviceBundleId = [string]$dev.BundleId }
         } elseif ($bundle -or $hasItemIds) {
-            $res[$id] = [pscustomobject]@{ State = 'Missing'; DeviceVersion = '' }
+            $res[$id] = [pscustomobject]@{ State = 'Missing'; DeviceVersion = ''; DeviceBundleId = '' }
         } else {
-            $res[$id] = [pscustomobject]@{ State = 'Unknown'; DeviceVersion = '' }
+            $res[$id] = [pscustomobject]@{ State = 'Unknown'; DeviceVersion = ''; DeviceBundleId = '' }
         }
     }
     return $res

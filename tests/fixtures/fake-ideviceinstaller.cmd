@@ -6,12 +6,15 @@ rem FAKE_APPS_FORMAT=garbage - unrecognized output.
 if defined FAKE_INSTALL_LOG echo %*>>"%FAKE_INSTALL_LOG%"
 set _list=
 set _xml=
+set _uninst=
 for %%a in (%*) do (
   if "%%~a"=="list" set _list=1
   if "%%~a"=="--xml" set _xml=1
+  if "%%~a"=="uninstall" set _uninst=1
 )
 if "%FAKE_MUX_ERROR%"=="always" (echo Could not connect to lockdownd: Mux error. Exiting.& exit /b 1)
 if defined _list goto list
+if defined _uninst goto uninstall
 rem FAKE_MUX_ERROR=always - Wi-Fi device asleep (lockdownd "Mux error"); FAKE_MUX_ONCE=<file> - only the first call.
 if defined FAKE_MUX_ONCE if not exist "%FAKE_MUX_ONCE%" (
   echo mux>"%FAKE_MUX_ONCE%"
@@ -32,4 +35,10 @@ if "%FAKE_APPS_FORMAT%"=="garbage" (echo Something unexpected& exit /b 0)
 if "%FAKE_APPS_FORMAT%"=="text" if defined _xml (echo ERROR: Unknown option --xml& exit /b 1)
 if "%FAKE_APPS_FORMAT%"=="text" (type "%~dp0fake-device-apps.txt"& exit /b 0)
 type "%~dp0fake-device-apps.xml"
+exit /b 0
+:uninstall
+rem FAKE_UNINSTALL_FAIL=1 - the app is not on the device.
+if "%FAKE_UNINSTALL_FAIL%"=="1" (echo ERROR: Uninstall failed: ApplicationVerificationFailed& exit /b 0)
+echo Uninstall: RemovingApplication (50%%)
+echo Uninstall: Complete
 exit /b 0
