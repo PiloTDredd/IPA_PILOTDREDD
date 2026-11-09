@@ -4,7 +4,9 @@
 ```powershell
 cd <папка программы>
 powershell -NoProfile -ExecutionPolicy Bypass -File tests\Run-Tests.ps1      # тесты ядра
-powershell -NoProfile -ExecutionPolicy Bypass -File IPA_Dredd.ps1 -SelfTest   # сборка всех экранов, темы, языки
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\Run-GuiSelfTest.ps1   # все экраны, темы, языки + сценарий (в копии программы)
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\Run-GuiSelfTest.ps1 -ViaLauncher   # то же через IPA_PILOTDREDD.exe
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\Make-Screenshots.ps1  # скриншоты README на демо-данных
 powershell -NoProfile -ExecutionPolicy Bypass -File IPA_Dredd.ps1 -Screenshot .\screens  # PNG каждого экрана
 ```
 
@@ -29,11 +31,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File IPA_Dredd.ps1 -Screenshot .\
 
 ### 2.1 Запуск и окружение
 - [ ] `Start_IPA_Dredd_Windows.bat` открывает окно ≤ 3 с без консольных ошибок.
-- [ ] Dashboard: ipatool ✓, ideviceinstaller ✓, папка бинарников указана.
-- [ ] Переименовать временно папку бинарников → Dashboard показывает ✗, кнопки App Store выключены, приложение не падает. Вернуть папку → «Перепроверить» в диагностике.
+- [ ] «Диагностика»: ipatool ✓, ideviceinstaller ✓, папка бинарников указана; в «Системе» — версия ipatool-cpp.
+- [ ] Переименовать временно папку бинарников → «Диагностика» показывает ✗, кнопки App Store выключены, приложение не падает. Вернуть папку → «Перепроверить» в диагностике.
 - [ ] Переключение темы тёмная ↔ светлая без перезапуска; все тексты читаемы.
 - [ ] Переключение языка RU ↔ EN без перезапуска; нет непереведённых строк.
 - [ ] Окно при 1100×700 и при развороте на весь экран — без обрезанных элементов.
+
+### 2.1a Компоненты и обновления (4.5.1)
+- [ ] Чистая папка без MainApp → «Загрузить компоненты» → набор IPA Downloader, затем сразу «ipatool-cpp ? → X» в журнале.
+- [ ] Старая папка (только `ipatool-version.txt`) → «Доступно обновление ipatool» → «Обновить» → версия в «Диагностике», копия в `MainApp_previous`.
+- [ ] Без интернета / GitHub 502 → понятное сообщение, программа работает.
+- [ ] `IPA_PILOTDREDD.exe` на чистой Windows с Защитником запускается (нет блокировки).
 
 ### 2.2 Apple ID (нужен реальный аккаунт)
 - [ ] Вход через форму без 2FA-запроса (доверенный ПК) → статус «вошли», email виден, в журнале `-p ***`.
@@ -112,4 +120,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -STA -File IPA_Dredd.ps1 -SelfTest
 | 2026-10-17 | Claude | Реальный ipatool, только чтение: `auth info`, `search`, `list-versions`, `get-version-metadata`, `idevice_id -l` | ✅ сессия распознана, поиск/версии работают, без устройства — «не найдено» |
 | 2026-10-17 | Claude | Метаданные реальных IPA из `Apps/` и `IPA_Downloader_4.2.0/Apps/` (включая бинарный `Info.plist`) | ✅ |
 | 2026-10-17 | Claude | `tools/Build-Release.ps1` | ✅ zip 30 МБ, без IPA/журналов/настроек |
+| 2026-11-09 | Claude (копия сессии, изолированный USERPROFILE) | ipatool-cpp 1.3.0: обновление через программу с GitHub, `auth info`, `list-versions`, `download` (WireGuard), `list-purchases` (226) | ✅ |
+| 2026-11-09 | пользователь | 4.5.1: новый вход с 2FA (mail.ru), переключение аккаунтов | ✅ |
+| 2026-11-09 | GitHub Actions (windows-latest) | тесты 53/53, самопроверка GUI и через exe, релиз 4.5.1 с attestation | ✅ |
 | — | пользователь | Ручной чек-лист §2 (Apple ID, загрузка, лицензия, устройства) | ⏭ не выполнялся: нужен реальный пароль/2FA, разрешение на загрузку и подключённый iPhone/iPad |
