@@ -1,6 +1,7 @@
 ﻿# Самопроверка GUI со сценарием на фейковом ipatool — в копии приложения (%TEMP%\IPADreddSelfTest), Files/ и Apps/ не трогаются.
 # -Screenshots <папка> — снимки экранов; -NoScenario — только построение экранов.
-param([string]$Screenshots, [switch]$NoScenario)
+# -ViaLauncher — запуск через IPA_PILOTDREDD.exe (tools/Launcher): проверка встроенного PowerShell запускатора.
+param([string]$Screenshots, [switch]$NoScenario, [switch]$ViaLauncher)
 $appRoot = Split-Path $PSScriptRoot -Parent
 $work = Join-Path ([System.IO.Path]::GetTempPath()) 'IPADreddSelfTest'
 $copy = Join-Path $work 'app'
@@ -14,10 +15,20 @@ New-Item -ItemType File (Join-Path $state 'logged_in') | Out-Null
 $env:FAKE_STATE_DIR = $state
 Push-Location $copy
 try {
-    $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-STA', '-File', 'IPA_Dredd.ps1', '-SelfTest')
-    if ($Screenshots) { $a += @('-Screenshot', $Screenshots) }
-    if (-not $NoScenario) { $a += @('-TestIpatool', 'tests\fixtures\fake-ipatool.cmd') }
-    & powershell.exe @a
-    $code = $LASTEXITCODE
+    $t = @('-SelfTest')
+    if ($Screenshots) { $t += @('-Screenshot', $Screenshots) }
+    if (-not $NoScenario) { $t += @('-TestIpatool', 'tests\fixtures\fake-ipatool.cmd') }
+    if ($ViaLauncher) {
+        # Окно самопроверки скрыто за краем экрана; результат — код возврата exe и Logs/selftest-result.txt.
+        Copy-Item (Join-Path $appRoot 'tools\Launcher\IPA_PILOTDREDD.exe') $copy
+        $env:IPADREDD_SELFTEST_RESULT = Join-Path $copy 'Logs\selftest-result.txt'
+        $p = Start-Process -FilePath (Join-Path $copy 'IPA_PILOTDREDD.exe') -ArgumentList $t -Wait -PassThru
+        $code = $p.ExitCode
+        if (Test-Path $env:IPADREDD_SELFTEST_RESULT) { Get-Content $env:IPADREDD_SELFTEST_RESULT }
+        Write-Output "LAUNCHER EXIT: $code"
+    } else {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File IPA_Dredd.ps1 @t
+        $code = $LASTEXITCODE
+    }
 } finally { Pop-Location }
 exit $code

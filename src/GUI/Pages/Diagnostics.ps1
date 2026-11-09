@@ -32,7 +32,7 @@ function Update-DiagnosticsPage {
     $p = $script:Ctx.Platform
     $u.DiagSystem.Text = @(
         "IPA PILOTDREDD $($script:Ctx.Version)"
-        "ipatool:    $(if ($v = Get-DreddToolVersion $script:Ctx) { "ipatool-cpp из релиза IPA Downloader $v (upstream)" } else { '?' })"
+        "ipatool:    $(if ($v = Get-DreddToolVersion $script:Ctx) { "ipatool-cpp $v" } elseif ($b = Get-DreddBundleVersion $script:Ctx) { "ipatool-cpp из IPA Downloader $b" } else { '?' })"
         "OS:         $($p.OSDescription) ($($p.Arch))"
         "PowerShell: $($p.PSVersion) $($p.PSEdition)"
         "Runtime:    $($p.Runtime)"
@@ -169,6 +169,8 @@ function Start-DreddToolUpdate {
                 if ($script:Ctx.Binaries.IdeviceId) { Start-DreddDeviceScan }
                 Update-PurchasesView
                 if (Get-Command Update-DevicesTexts -ErrorAction SilentlyContinue) { Update-DevicesTexts }
+                # В наборе IPA Downloader ipatool может быть старше последнего ipatool-cpp — сразу доустанавливаем свежий.
+                Start-DreddUpdateCheck -InstallNow
             } else {
                 Show-DreddToast -Kind Success -Title (TF 'Update.Done' @($res.Version)) -Text (T 'Update.DoneText') -AutoHideMs 8000
             }

@@ -3,6 +3,7 @@
 # MainApp/ и MainApp_previous/ (бинарники скачиваются при первом запуске), dist/, собранный exe.
 /*
 !/.gitignore
+!/.github/
 !/VERSION
 !/README.md
 !/LICENSE
@@ -24,4 +25,6 @@
 *.tmp
 *.part
 *.exe
+# Кроме запускатора: один и тот же файл из релиза в релиз (репутация у антивирусов), см. tools/Build-Launcher.ps1
+!/tools/Launcher/IPA_PILOTDREDD.exe
 .ipatool/

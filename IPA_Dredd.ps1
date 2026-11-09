@@ -28,7 +28,11 @@ trap {
         if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir | Out-Null }
         Add-Content -LiteralPath (Join-Path $logDir 'startup-error.log') -Value ("{0:yyyy-MM-dd HH:mm:ss} {1}" -f (Get-Date), $msg) -Encoding UTF8
     } catch { }
-    if ($SelfTest -or $Screenshot) { Write-Output "SELFTEST FAILED: $msg"; exit 1 }
+    if ($SelfTest -or $Screenshot) {
+        Write-Output "SELFTEST FAILED: $msg"
+        if ($env:IPADREDD_SELFTEST_RESULT) { try { [System.IO.File]::WriteAllText($env:IPADREDD_SELFTEST_RESULT, "SELFTEST FAILED: $msg") } catch { } }
+        exit 1
+    }
     try {
         Add-Type -AssemblyName PresentationFramework
         [void][System.Windows.MessageBox]::Show("IPA PILOTDREDD could not start:`n`n$msg", 'IPA PILOTDREDD', 'OK', 'Error')
@@ -180,10 +184,21 @@ if ($SelfTest -or $Screenshot) {
             [void](& $wait { $script:Account -and $script:Account.Success -and -not $script:PurchaseLoadTask -and $script:PurchaseRows.Count -gt 0 })
             Start-DreddDeviceScan
             [void](& $wait { -not $script:DeviceScanTask })
+            # «Сравнить с iPhone» на демо-данных: часть покупок стоит на телефоне, Spotify — старой версии.
+            $usb = @($script:DeviceRows | Where-Object { $_.Connection -ne 'network' } | Select-Object -First 1)
+            if ($usb) {
+                $devApps = foreach ($p in @(@('686449807', ''), @('310633997', ''), @('544007664', ''), @('985746746', ''), @('324684580', '8.9.0'))) {
+                    $pa = $script:PurchaseApps[$p[0]]
+                    if ($pa) { [pscustomobject]@{ BundleId = $pa.BundleId; Name = $pa.Name; Version = $(if ($p[1]) { $p[1] } else { $pa.Version }); Build = ''; ItemId = $p[0] } }
+                }
+                $script:DeviceCompare = @{ Udid = $usb[0].Udid; Name = $usb[0].Name; Ios = $usb[0].IosVersion; Apps = @($devApps); At = Get-Date }
+            }
             Update-DreddPurchaseStatuses
             $shots = @(
                 @{ Theme = 'Dark'; Page = 'Purchases'; Name = 'purchases_dark' }, @{ Theme = 'Light'; Page = 'Purchases'; Name = 'purchases_light' },
                 @{ Theme = 'Dark'; Page = 'Purchases'; Tab = 'PurTabMissing'; Name = 'purchases_removed' },
+                @{ Theme = 'Dark'; Page = 'Purchases'; Tab = 'PurTabNotOnDevice'; Name = 'purchases_not_on_iphone' },
+                @{ Theme = 'Dark'; Page = 'Purchases'; Tab = 'PurTabDeviceOutdated'; Name = 'purchases_update_on_iphone' },
                 @{ Theme = 'Dark'; Page = 'Catalog'; Tab = 'SrcPopular'; Name = 'search_popular' },
                 @{ Theme = 'Dark'; Page = 'Downloads'; Name = 'downloads' }, @{ Theme = 'Dark'; Page = 'Devices'; Name = 'devices' })
             foreach ($s in $shots) {
@@ -372,13 +387,12 @@ if ($SelfTest -or $Screenshot) {
     }
     $uiErrors = @($script:LogLines | Where-Object { $_.Level -eq 'Error' -and $_.Line -match '\[UI\]|\[Task\]' })
     foreach ($u in $uiErrors) { $errors.Add($u.Line) }
-    if ($errors.Count -gt 0) {
-        Write-Output "SELFTEST FAILED ($($errors.Count))"
-        $errors | Select-Object -Unique | ForEach-Object { Write-Output " - $_" }
-        exit 1
-    }
-    Write-Output ("SELFTEST OK: {0} pages x 2 themes x 2 languages, {1} localized elements, library {2} IPA" -f $script:Pages.Count, $script:LocEntries.Count, $script:LibraryRows.Count)
-    exit 0
+    # Через IPA_PILOTDREDD.exe консоли нет: итог дублируется в файл из IPADREDD_SELFTEST_RESULT (tools/Run-GuiSelfTest.ps1 -ViaLauncher).
+    $result = if ($errors.Count -gt 0) { @("SELFTEST FAILED ($($errors.Count))") + @($errors | Select-Object -Unique | ForEach-Object { " - $_" }) }
+              else { @("SELFTEST OK: {0} pages x 2 themes x 2 languages, {1} localized elements, library {2} IPA" -f $script:Pages.Count, $script:LocEntries.Count, $script:LibraryRows.Count) }
+    $result | ForEach-Object { Write-Output $_ }
+    if ($env:IPADREDD_SELFTEST_RESULT) { try { [System.IO.File]::WriteAllLines($env:IPADREDD_SELFTEST_RESULT, [string[]]$result) } catch { } }
+    exit $(if ($errors.Count -gt 0) { 1 } else { 0 })
 }
 
 # ---- Обычный запуск ----

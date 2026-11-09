@@ -1,0 +1,54 @@
+# Релиз собирается на серверах GitHub из кода этого репозитория: push тега vX.Y.Z → тесты → zip → подпись
+# происхождения (artifact attestation) → релиз с заметками из docs/release-notes/X.Y.Z.md.
+# Проверить, что архив собран здесь: gh attestation verify IPA_PILOTDREDD_X.Y.Z_portable.zip -R PiloTDredd/IPA_PILOTDREDD
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version matches the tag
+        id: ver
+        shell: powershell
+        run: |
+          $v = (Get-Content VERSION -Raw).Trim()
+          if ("v$v" -ne $env:GITHUB_REF_NAME) { throw "VERSION $v does not match tag $env:GITHUB_REF_NAME" }
+          if (-not (Test-Path "docs\release-notes\$v.md")) { throw "docs/release-notes/$v.md is missing" }
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding ascii
+
+      - name: Core tests
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tests\Run-Tests.ps1; exit $LASTEXITCODE
+
+      - name: GUI self-test via IPA_PILOTDREDD.exe
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools\Run-GuiSelfTest.ps1 -ViaLauncher; exit $LASTEXITCODE
+
+      - name: Build portable zip
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools\Build-Release.ps1; exit $LASTEXITCODE
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/IPA_PILOTDREDD_${{ steps.ver.outputs.version }}_portable.zip
+
+      - name: Publish release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $v = '${{ steps.ver.outputs.version }}'
+          gh release create "v$v" "dist\IPA_PILOTDREDD_$($v)_portable.zip" --title "IPA PILOTDREDD $v" --notes-file "docs\release-notes\$v.md" --verify-tag

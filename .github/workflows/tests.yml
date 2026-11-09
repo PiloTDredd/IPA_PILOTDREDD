@@ -1,0 +1,38 @@
+# Тесты на чистой Windows при каждом push и pull request: модульные тесты ядра и самопроверка GUI
+# (все экраны, обе темы, оба языка, сценарий на фейковом ipatool и фейковом iPhone; без Apple ID и паролей).
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Core tests (Windows PowerShell 5.1)
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tests\Run-Tests.ps1; exit $LASTEXITCODE
+
+      - name: GUI self-test
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools\Run-GuiSelfTest.ps1; exit $LASTEXITCODE
+
+      - name: GUI self-test via IPA_PILOTDREDD.exe
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools\Run-GuiSelfTest.ps1 -ViaLauncher; exit $LASTEXITCODE
+
+      - name: Launcher matches its sources
+        shell: powershell
+        run: |
+          $h = & tools\Get-LauncherSourceHash.ps1
+          $r = (Get-Content tools\Launcher\launcher.sha256 -Raw).Trim()
+          if ($h -ne $r) { throw "tools/Launcher/IPA_PILOTDREDD.exe is out of date: run tools\Build-Launcher.ps1 and commit it" }

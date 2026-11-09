@@ -589,23 +589,78 @@ function New-FakeToolRelease {
     return $zip
 }
 
-Test 'Tool update: silent check compares the bundled upstream version' {
+Test 'Tool update: ipatool-cpp is checked in its own repo, the platform archive is picked' {
     $ctx = New-TestContext
     $ctx.Binaries.RootSource = 'app'
+    $plat = $ctx.Platform.BinaryFolder
     [void][System.IO.Directory]::CreateDirectory((Join-Path $ctx.AppRoot 'MainApp'))
+    # Компоненты поставлены набором IPA Downloader 4.3.3: версия ipatool-cpp не записана.
     [System.IO.File]::WriteAllText((Join-Path $ctx.AppRoot 'MainApp\ipatool-version.txt'), '4.3.3')
-    $rel = { param($tag, $digest) $j = @{ tag_name = $tag; assets = @(@{ name = "IPA_Downloader_$tag.zip"; size = 1000; browser_download_url = "https://github.com/x/y/releases/download/$tag/a.zip"; digest = $digest }) } | ConvertTo-Json -Depth 4; { $j }.GetNewClosure() }
-    $same = Test-DreddToolUpdate -Context $ctx -Fetch (& $rel '4.3.3' ('sha256:' + ('a' * 64)))
+    $seen = @{ Url = $null }
+    $rel = { param($tag, $digest) $box = $seen; $j = @{ tag_name = $tag; assets = @(
+                @{ name = 'linux_amd64_ipatool-cpp.zip'; size = 5; browser_download_url = "https://github.com/x/y/releases/download/$tag/l.zip"; digest = ('sha256:' + ('f' * 64)) },
+                @{ name = "$($plat)_ipatool-cpp.zip"; size = 1000; browser_download_url = "https://github.com/x/y/releases/download/$tag/w.zip"; digest = $digest }) } | ConvertTo-Json -Depth 4
+        { param($url) $box.Url = $url; $j }.GetNewClosure() }
+    $first = Test-DreddToolUpdate -Context $ctx -Fetch (& $rel '1.3.0' ('sha256:' + ('a' * 64)))
+    Assert-Match $seen.Url 'repos/Sorvigolova/ipatool/releases/latest' 'ipatool updates must come from ipatool-cpp releases.'
+    Assert-Equal $null $first.Current
+    Assert-True $first.IsNewer 'without a recorded ipatool-cpp version the update must be offered once.'
+    Assert-True $first.CanInstall
+    Assert-Equal 'Tool' $first.Release.Kind
+    Assert-Equal "$($plat)_ipatool-cpp.zip" $first.Release.Asset.Name
+    Assert-Equal '4.3.3' (Get-DreddBundleVersion $ctx)
+    [System.IO.File]::WriteAllText((Join-Path $ctx.AppRoot 'MainApp\ipatool-cpp-version.txt'), '1.3.0')
+    $same = Test-DreddToolUpdate -Context $ctx -Fetch (& $rel '1.3.0' ('sha256:' + ('a' * 64)))
     Assert-True $same.Ok
     Assert-False $same.IsNewer 'same version reported as an update.'
-    $newer = Test-DreddToolUpdate -Context $ctx -Fetch (& $rel '4.3.10' ('sha256:' + ('b' * 64)))
-    Assert-True $newer.IsNewer '4.3.10 must be newer than 4.3.3.'
-    Assert-True $newer.CanInstall
-    $noSum = Test-DreddToolUpdate -Context $ctx -Fetch (& $rel '4.4.0' $null)
+    $newer = Test-DreddToolUpdate -Context $ctx -Fetch (& $rel '1.3.10' ('sha256:' + ('b' * 64)))
+    Assert-True $newer.IsNewer '1.3.10 must be newer than 1.3.0.'
+    $noSum = Test-DreddToolUpdate -Context $ctx -Fetch (& $rel '1.4.0' $null)
     Assert-False $noSum.CanInstall 'install without a checksum must be refused.'
     Assert-Equal 'NoChecksum' $noSum.Reason
+    $noPlat = Test-DreddToolUpdate -Context $ctx -Fetch { '{"tag_name":"1.5.0","assets":[{"name":"linux_amd64_ipatool-cpp.zip","size":1,"browser_download_url":"https://e.com/a.zip","digest":"sha256:' + ('c' * 64) + '"}]}' }
+    Assert-Equal 'NoAsset' $noPlat.Reason 'an archive of another platform must not be installed.'
     $off = Test-DreddToolUpdate -Context $ctx -Fetch { throw 'The remote name could not be resolved' }
     Assert-False $off.Ok
+}
+
+Test 'Web: GitHub 502 is retried, then reported briefly' {
+    $env:IPADREDD_FAST_RETRY = '1'
+    try {
+        $timeout = New-Object System.Net.WebException('The operation has timed out', 'Timeout')
+        Assert-True (Test-DreddTransientWebError $timeout) 'timeout must be retried.'
+        Assert-True (Test-DreddTransientWebError (New-Object System.Management.Automation.MethodInvocationException('Exception calling "GetResponse"', $timeout))) 'wrapped error must be unwrapped.'
+        Assert-False (Test-DreddTransientWebError (New-Object System.InvalidOperationException('x'))) 'other errors must not be retried.'
+        Assert-Equal 'Timeout' (Get-DreddWebErrorText (New-Object System.Management.Automation.MethodInvocationException('Exception calling "GetResponse" with "0" argument(s)', $timeout)))
+        # Реальный ответ 502 от локального сервера: две ошибки, затем успех.
+        $listener = New-Object System.Net.HttpListener
+        $port = Get-Random -Minimum 20000 -Maximum 60000
+        $listener.Prefixes.Add("http://127.0.0.1:$port/"); $listener.Start()
+        $job = [powershell]::Create().AddScript({
+            param($l)
+            for ($i = 0; $i -lt 3; $i++) {
+                $c = $l.GetContext()
+                $c.Response.StatusCode = $(if ($i -lt 2) { 502 } else { 200 })
+                $b = [System.Text.Encoding]::UTF8.GetBytes($(if ($i -lt 2) { 'bad gateway' } else { 'hello' }))
+                $c.Response.OutputStream.Write($b, 0, $b.Length); $c.Response.Close()
+            }
+        }).AddArgument($listener)
+        $h = $job.BeginInvoke()
+        try {
+            $t = Invoke-DreddWebText -Url "http://127.0.0.1:$port/x" -Retries 3
+            Assert-Equal 'hello' $t
+        } finally { [void]$h.AsyncWaitHandle.WaitOne(5000); $listener.Stop(); $job.Dispose() }
+        $listener2 = New-Object System.Net.HttpListener
+        $listener2.Prefixes.Add("http://127.0.0.1:$($port + 1)/"); $listener2.Start()
+        $job2 = [powershell]::Create().AddScript({ param($l) for ($i = 0; $i -lt 2; $i++) { $c = $l.GetContext(); $c.Response.StatusCode = 502; $c.Response.Close() } }).AddArgument($listener2)
+        $h2 = $job2.BeginInvoke()
+        try {
+            $err = $null
+            try { [void](Invoke-DreddWebText -Url "http://127.0.0.1:$($port + 1)/x" -Retries 1) } catch { $err = $_.Exception }
+            Assert-True ($null -ne $err) 'persistent 502 must fail after retries.'
+            Assert-Equal 'HTTP 502' (Get-DreddWebErrorText $err)
+        } finally { [void]$h2.AsyncWaitHandle.WaitOne(5000); $listener2.Stop(); $job2.Dispose() }
+    } finally { Remove-Item Env:\IPADREDD_FAST_RETRY -ErrorAction SilentlyContinue }
 }
 
 Test 'Tool update: checksum is enforced, files replaced with a backup' {
@@ -616,9 +671,14 @@ Test 'Tool update: checksum is enforced, files replaced with a backup' {
     $old = Join-Path $plat 'ipatool-cpp-windows-amd64.cmd'
     [System.IO.File]::WriteAllText($old, "@echo ipatool old`r`n")
     [System.IO.File]::WriteAllText((Join-Path $ctx.AppRoot 'MainApp\ipatool-version.txt'), '4.3.3')
-    $zip = New-FakeToolRelease -Dir (Join-Path $TestRoot ('rel_' + [guid]::NewGuid().ToString('N').Substring(0, 6)))
+    # Архив релиза ipatool-cpp: один файл в корне, без папок MainApp/<платформа>.
+    $dir = Join-Path $TestRoot ('rel_' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+    [void][System.IO.Directory]::CreateDirectory((Join-Path $dir 'src'))
+    [System.IO.File]::WriteAllText((Join-Path $dir 'src\ipatool-cpp-windows-amd64.cmd'), "@echo ipatool-cpp test build`r`n")
+    $zip = Join-Path $dir 'windows_amd64_ipatool-cpp.zip'
+    [System.IO.Compression.ZipFile]::CreateFromDirectory((Join-Path $dir 'src'), $zip)
     $sha = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-    $release = [pscustomobject]@{ Tag = '9.9.9'; Version = '9.9.9'; Url = ''; Asset = [pscustomobject]@{ Name = 'a.zip'; Url = 'https://example.com/a.zip'; Size = 1; Sha256 = ('0' * 64) } }
+    $release = [pscustomobject]@{ Tag = '9.9.9'; Version = '9.9.9'; Url = ''; Kind = 'Tool'; Asset = [pscustomobject]@{ Name = 'a.zip'; Url = 'https://example.com/a.zip'; Size = 1; Sha256 = ('0' * 64) } }
     $bad = Install-DreddToolUpdate -Context $ctx -Release $release -ZipPath $zip
     Assert-Equal 'Err.UpdateChecksum' $bad.ErrorKey
     Assert-Match ([System.IO.File]::ReadAllText($old)) 'old' 'file replaced despite a checksum mismatch.'
@@ -628,6 +688,7 @@ Test 'Tool update: checksum is enforced, files replaced with a backup' {
     Assert-Match ([System.IO.File]::ReadAllText($old)) 'test build' 'ipatool not replaced.'
     Assert-Match ([System.IO.File]::ReadAllText((Join-Path $ctx.AppRoot 'MainApp_previous\windows_amd64\ipatool-cpp-windows-amd64.cmd'))) 'old' 'no backup of the previous ipatool.'
     Assert-Equal '9.9.9' (Get-DreddToolVersion $ctx)
+    Assert-Equal '4.3.3' (Get-DreddBundleVersion $ctx) 'ipatool update must not change the bundle version.'
     Assert-Equal 0 @([System.IO.Directory]::GetDirectories($ctx.TempRoot, 'update_*')).Count 'update temp folder not cleaned.'
 }
 
@@ -651,7 +712,8 @@ Test 'First run without binaries: components installed from the release archive'
         Assert-True ([System.IO.File]::Exists((Join-Path $ctx.AppRoot "MainApp\windows_amd64\$f"))) "$f not installed."
     }
     Assert-False ([System.IO.Directory]::Exists((Join-Path $ctx.AppRoot 'MainApp_previous'))) 'first setup must not create a backup.'
-    Assert-Equal '9.9.9' (Get-DreddToolVersion $ctx)
+    Assert-Equal '9.9.9' (Get-DreddBundleVersion $ctx)
+    Assert-Equal $null (Get-DreddToolVersion $ctx) 'after setup the ipatool-cpp version is unknown, so its update is offered next.'
 }
 
 Test 'Install: a device that briefly disappears is retried; a missing device gives a clear error' {
