@@ -32,42 +32,48 @@
 ## 2. Структура папки
 
 ```text
-IPA_Dredd_4.3.0/
-├── IPA_Dredd.ps1                  точка входа GUI (-SelfTest, -Screenshot <папка>)
-├── Start_IPA_Dredd_Windows.bat    запуск двойным кликом
-├── README.md                      кратко для пользователя
+IPA_PILOTDREDD/
+├── IPA_PILOTDREDD.exe             запускатор (встроенный PowerShell 5.1, ADR-026); в git — tools/Launcher/
+├── IPA_Dredd.ps1                  точка входа GUI (-SelfTest, -Screenshot <папка>, -TestIpatool, -Demo)
+├── Start_IPA_Dredd_Windows.bat    запасной запуск, если exe заблокирован
+├── VERSION                        единственный номер версии (ADR-023)
 ├── src/
 │   ├── Core/
 │   │   ├── IPADredd.Core.psm1     загружает части и экспортирует функции
 │   │   ├── Native/PlistReader.cs  XML + bplist00 → словари
-│   │   └── *.ps1                  Context, Settings, Logging, Process, Binaries, Ipatool,
-│   │                              Accounts, AppLists, History, Library, Downloads,
-│   │                              Devices, Diagnostics, RemoteLists, Localization
+│   │   └── *.ps1                  Platform, Settings, Logging, Process, Binaries, Context, Ipatool,
+│   │                              Accounts, AppLists, History, Purchases, Library, Downloads,
+│   │                              Devices, Diagnostics, RemoteLists, Updates, Localization
 │   ├── Localization/ru.json, en.json
 │   └── GUI/
-│       ├── MainWindow.xaml, VersionsDialog.xaml, Dialog.xaml
+│       ├── MainWindow.xaml, VersionsDialog.xaml, Dialog.xaml, Assets/app.ico
 │       ├── Native/ViewModels.cs   строки таблиц с INotifyPropertyChanged
 │       ├── Themes/Styles.xaml, Dark.xaml, Light.xaml
 │       ├── TaskRunner.ps1, Gui.ps1
-│       └── Pages/Dashboard.ps1, Catalog.ps1, Downloads.ps1, Library.ps1,
+│       └── Pages/Shell.ps1, Purchases.ps1, Catalog.ps1, Downloads.ps1, Library.ps1,
 │                 Devices.ps1, Accounts.ps1, Settings.ps1, Diagnostics.ps1
-├── Files/                         AppsList.txt, AppsListCustom.txt, Settings.txt,
-│                                  PurchasedAppsList.json, DownloadHistory.json
+├── Files/                         AppsList.txt (в git); у пользователя ещё AppsListCustom.txt, Settings.txt,
+│                                  истории, очередь, Purchases/ (кэш покупок), Cache/Icons/
+├── MainApp/<платформа>/           компоненты, скачиваются при первом запуске (не в git и не в релизе, ADR-022)
+│   ├── ipatool-cpp-version.txt    версия ipatool-cpp (ADR-025)
+│   └── ipatool-version.txt        версия набора IPA Downloader первой установки
+├── MainApp_previous/              предыдущий ipatool после обновления (откат)
 ├── Apps/                          папка загрузок по умолчанию
 ├── Logs/                          журналы по дням (email замаскирован)
-├── tests/                         Run-Tests.ps1, *.Tests.ps1, fixtures/ (фейковый ipatool)
-└── tools/Build-Release.ps1        сборка zip с MainApp
+├── tests/                         Run-Tests.ps1, Core.Tests.ps1, fixtures/ (фейковые ipatool и iPhone)
+├── tools/                         Build-Release, Build-Launcher, Launcher/, Run-GuiSelfTest, Make-Screenshots,
+│                                  Fix-Encoding, Get-LauncherSourceHash
+├── docs/                          ARCHITECTURE, DECISIONS, SECURITY, TESTING, images/, release-notes/
+└── .github/workflows/             tests.yml (каждый push), release.yml (по тегу v*, ADR-027)
 ```
-
-`MainApp` в рабочем дереве не дублируется, порядок поиска описан в ADR-004.
 
 ## 3. Ключевые потоки
 
 ### 3.1 Запуск
-1. `IPA_Dredd.ps1`: STA-поток, загрузка WPF, `Import-Module IPADredd.Core`.
+1. `IPA_PILOTDREDD.exe` выполняет `IPA_Dredd.ps1` во встроенном PowerShell (STA-поток), загрузка WPF, `Import-Module IPADredd.Core`.
 2. `New-DreddContext`: чтение `Settings.txt`, создание папок, поиск бинарников.
-3. Сборка окна, применение темы и языка, показ Dashboard.
-4. Фоном: `auth info` (текущий аккаунт), скан устройств (если есть `idevice_id`), индексация библиотеки, обновление списков (если включено).
+3. Сборка окна, применение темы и языка, показ «Покупок» (ADR-021).
+4. Фоном: `auth info` (текущий аккаунт), скан устройств (если есть `idevice_id`), индексация библиотеки, обновление списков, проверка обновлений ipatool и самой программы (если включено).
 
 ### 3.2 Загрузка
 ```text
@@ -106,7 +112,7 @@ TaskRunner → Invoke-DreddDownload(ctx, appId, versionId?, purchase?, reporter,
 ## 4. Модель потоков (ADR-003)
 
 ```text
-UI-поток (STA)                         Runspace-пул (1..4)
+UI-поток (STA)                         Runspace-пул (1..8)
 ──────────────                         ───────────────────
 Start-DreddTask ── BeginInvoke ──────► Import-Module Core; & $Script $Ctx $Args $Reporter $Token
 DispatcherTimer 100 мс ◄── Queue ───── $Reporter.Invoke('log'|'progress'|'status', …)
@@ -128,4 +134,4 @@ DispatcherTimer 100 мс ◄── Queue ───── $Reporter.Invoke('log'|
 ## 6. Обработка ошибок
 - Core-функции возвращают объект результата `{ Success, Data, Error, ExitCode, Output }` или бросают исключения с понятным текстом. GUI показывает текст и пишет подробности в журнал.
 - `Resolve-DreddToolError` переводит типичные ответы ipatool в подсказки: не выполнен вход, нужна 2FA, нет лицензии, нет в регионе, сетевая ошибка. Тексты ipatool **не проверены** на всех сценариях, неизвестный ответ показывается как есть.
-- Отсутствие бинарника не роняет приложение: соответствующие действия выключаются, а Dashboard и «Диагностика» показывают, что нужно сделать.
+- Отсутствие бинарника не роняет приложение: соответствующие действия выключаются, а «Диагностика» показывает, что нужно сделать.
