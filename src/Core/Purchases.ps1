@@ -245,6 +245,70 @@ function Get-DreddPurchaseStatus {
     }
 }
 
+function Get-DreddPurchaseDeviceBadge {
+    <#
+      Плашка «На iPhone» для строки покупок:
+        Installed / Outdated / Missing / Unknown — результат сравнения (Compare-DreddDeviceApps);
+        NeedIos — приложение не стоит на устройстве и не пойдёт на его iOS (важнее, чем «нет»);
+        ''      — сравнения не было и про несовместимость ничего не известно.
+      -DeviceState: State из Compare-DreddDeviceApps или '' (сравнения не было). -DeviceIos: версия iOS устройства.
+    #>
+    param([Parameter(Mandatory)]$App, [string]$DeviceState, [string]$DeviceIos)
+    if ($DeviceState -notin 'Installed', 'Outdated' -and $App.MinIOS -and (Test-DreddIosCompatible -MinIOS $App.MinIOS -DeviceVersion $DeviceIos) -eq $false) { return 'NeedIos' }
+    return [string]$DeviceState
+}
+
+function Get-DreddPurchaseTabs {
+    <#
+      Во все ли вкладки и фильтры «Покупок» попадает приложение. Один источник правил и для показа строк, и для счётчиков.
+        All; по статусу (Get-DreddPurchaseStatus): Available, Downloaded (вместе с UpdateAvailable), UpdateAvailable,
+        Failed, Problems (Failed + Unverified); NotInStore — всё снятое с продажи, в том числе уже скачанное;
+        по устройству: NotOnDevice, OnDevice (вместе с Outdated), DeviceOutdated, Incompatible (плашка NeedIos).
+      Несовместимое с iOS устройства остаётся и в NotOnDevice, если сравнение показало «нет».
+    #>
+    param([Parameter(Mandatory)]$App, [string]$Status, [string]$DeviceState, [string]$Badge)
+    $t = New-Object System.Collections.Generic.List[string]
+    $t.Add('All')
+    switch ($Status) {
+        'Available' { $t.Add('Available') }
+        'Downloaded' { $t.Add('Downloaded') }
+        'UpdateAvailable' { $t.Add('Downloaded'); $t.Add('UpdateAvailable') }
+        'NotInStore' { }
+        'Failed' { $t.Add('Failed'); $t.Add('Problems') }
+        default { $t.Add('Problems') }
+    }
+    if ($App.Lookup -eq 'Missing') { $t.Add('NotInStore') }
+    switch ($DeviceState) {
+        'Missing' { $t.Add('NotOnDevice') }
+        'Installed' { $t.Add('OnDevice') }
+        'Outdated' { $t.Add('OnDevice'); $t.Add('DeviceOutdated') }
+    }
+    if ($Badge -eq 'NeedIos') { $t.Add('Incompatible') }
+    return $t.ToArray()
+}
+
+function Get-DreddPurchaseRowAction {
+    <#
+      Главное действие строки «Покупок» (одна кнопка, она же двойной клик):
+        Update   — на iPhone старая версия: скачать (если нужно) и обновить;
+        Install  — на iPhone приложения нет или его не удалось сопоставить: скачать и поставить;
+        Blocked  — не пойдёт на iOS этого устройства: кнопка неактивна (старую версию можно выбрать в меню);
+        None     — уже стоит на iPhone в свежей версии, либо телефона нет, а файл уже скачан;
+        Download — телефон не подключён и сравнения не было: скачать на компьютер.
+      -Status: Get-DreddPurchaseStatus; -Badge: Get-DreddPurchaseDeviceBadge.
+    #>
+    param([string]$Status, [string]$Badge)
+    switch ($Badge) {
+        'Installed' { return 'None' }
+        'Outdated' { return 'Update' }
+        'NeedIos' { return 'Blocked' }
+        'Missing' { return 'Install' }
+        'Unknown' { return 'Install' }
+    }
+    if ($Status -eq 'Downloaded') { return 'None' }
+    return 'Download'
+}
+
 function Save-DreddIcons {
     # Скачивает недостающие иконки (Files/Cache/Icons/<ID>.jpg). Сообщение data { Id; Path } на каждую иконку.
     param([Parameter(Mandatory)]$Context, [object[]]$Apps, $Reporter, $CancellationToken, [ValidateRange(1, 16)][int]$Parallel = 6)

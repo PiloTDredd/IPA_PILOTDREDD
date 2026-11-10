@@ -13,9 +13,9 @@ function Initialize-HomePage {
     $u.HomeInstallBtn.Add_Click({ Safe { $f = @(Select-DreddIpaFiles); if ($f.Count -gt 0) { Invoke-DreddInstallFiles $f } } })
     $u.HomeScanBtn.Add_Click({ Safe { Start-DreddDeviceScan; Update-HomeDevice } })
     $u.HomeDevicesBtn.Add_Click({ Safe { Show-DreddPage 'Devices' } })
-    $u.HomeTileMissing.Add_Click({ Safe { Open-DreddHomeTile 'PurTabNotOnDevice' } })
-    $u.HomeTileOn.Add_Click({ Safe { Open-DreddHomeTile 'PurTabOnDevice' } })
-    $u.HomeTileUpdate.Add_Click({ Safe { Open-DreddHomeTile 'PurTabDeviceOutdated' } })
+    $u.HomeTileMissing.Add_Click({ Safe { Open-DreddHomeTile 'NotOnDevice' } })
+    $u.HomeTileOn.Add_Click({ Safe { Open-DreddHomeTile 'OnDevice' } })
+    $u.HomeTileUpdate.Add_Click({ Safe { Open-DreddHomeTile 'OnDevice' 'DeviceOutdated' } })
     $u.HomeDlCancelBtn.Add_Click({ Safe { $q = $script:UI.HomeDlActive.DataContext; if ($q) { Stop-DreddDownloadItem $q } } })
     $u.HomeDlQueueLink.Add_Click({ Safe { Show-DreddPage 'Downloads' } })
     $u.HomeAllDownloadsBtn.Add_Click({ Safe { Show-DreddPage 'Downloads' } })
@@ -228,10 +228,10 @@ function Update-HomeTiles {
 }
 
 function Open-DreddHomeTile {
-    # Плитка → нужная вкладка «Покупок». Сравнения ещё не было — запускаем его (вкладку откроет «Сравнить с iPhone»).
-    param([string]$Tab)
+    # Плитка → нужная вкладка «Покупок» (и фильтр). Сравнения ещё не было — запускаем его (вкладку откроет «Сравнить с iPhone»).
+    param([string]$Tab, [string]$Extra = '')
     Show-DreddPage 'Purchases'
-    if ($script:DeviceCompare) { $script:UI[$Tab].IsChecked = $true; return }
+    if ($script:DeviceCompare) { Set-DreddPurchaseFilter -Tab $Tab -Extra $Extra; return }
     if ($script:PurchaseRows.Count -gt 0) { Start-DreddDeviceAppsScan }
 }
 

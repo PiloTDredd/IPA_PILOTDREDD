@@ -206,16 +206,20 @@ if ($SelfTest -or $Screenshot) {
             $shots = @(
                 @{ Theme = 'Dark'; Page = 'Home'; Name = 'home_dark' }, @{ Theme = 'Light'; Page = 'Home'; Name = 'home_light' },
                 @{ Theme = 'Dark'; Page = 'Purchases'; Name = 'purchases_dark' }, @{ Theme = 'Light'; Page = 'Purchases'; Name = 'purchases_light' },
-                @{ Theme = 'Dark'; Page = 'Purchases'; Tab = 'PurTabMissing'; Name = 'purchases_removed' },
-                @{ Theme = 'Dark'; Page = 'Purchases'; Tab = 'PurTabNotOnDevice'; Name = 'purchases_not_on_iphone' },
-                @{ Theme = 'Dark'; Page = 'Purchases'; Tab = 'PurTabDeviceOutdated'; Name = 'purchases_update_on_iphone' },
+                @{ Theme = 'Dark'; Page = 'Purchases'; PurExtra = 'NotInStore'; Name = 'purchases_removed' },
+                @{ Theme = 'Dark'; Page = 'Purchases'; PurTab = 'NotOnDevice'; Name = 'purchases_not_on_iphone' },
+                @{ Theme = 'Dark'; Page = 'Purchases'; PurTab = 'OnDevice'; PurExtra = 'DeviceOutdated'; Name = 'purchases_update_on_iphone' },
+                @{ Theme = 'Dark'; Page = 'Purchases'; PurTab = 'OnDevice'; Select = 2; Name = 'purchases_selected' },
                 @{ Theme = 'Dark'; Page = 'Catalog'; Tab = 'SrcPopular'; Name = 'search_popular' },
                 @{ Theme = 'Dark'; Page = 'Downloads'; Name = 'downloads' }, @{ Theme = 'Dark'; Page = 'Devices'; Name = 'devices' })
             foreach ($s in $shots) {
                 Set-DreddTheme $s.Theme; Set-DreddLanguage 'RU'
                 Show-DreddPage $s.Page
-                $script:UI.PurTabAll.IsChecked = $true; $script:UI.SrcSearch.IsChecked = $true
+                $script:UI.SrcSearch.IsChecked = $true
+                $script:UI.PurGrid.UnselectAll()
+                Set-DreddPurchaseFilter -Tab $(if ($s.PurTab) { $s.PurTab } else { 'All' }) -Extra ([string]$s.PurExtra)
                 if ($s.Tab) { $script:UI[$s.Tab].IsChecked = $true }
+                if ($s.Select) { Wait-DreddUi 200; foreach ($it in @($script:UI.PurGrid.Items | Select-Object -First $s.Select)) { [void]$script:UI.PurGrid.SelectedItems.Add($it) } }
                 if ($s.Page -eq 'Devices' -and $script:UI.DevIpaGrid.Items.Count -gt 0) { $script:UI.DevIpaGrid.SelectedIndex = 0 }
                 Wait-DreddUi 1200
                 Save-DreddScreenshot (Join-Path $Screenshot ($s.Name + '.png'))
@@ -366,7 +370,12 @@ if ($SelfTest -or $Screenshot) {
                 if ($Screenshot) { Wait-DreddUi 300; Save-DreddScreenshot (Join-Path $Screenshot 'Scenario_DeviceCompare.png') }
                 Set-DreddDeviceAppInstalled -AppId '1111111' -Udid '00008110-000A1B2C3D4E5F60' -Version '2.5.1'
                 if ($n1.DeviceState -ne 'Installed') { $errors.Add("scenario: installed app still '$($n1.DeviceState)'") }
-                $script:UI.PurTabAll.IsChecked = $true
+                # Новый вид строки: стоит на iPhone — кнопки нет; фильтр из меню сужает вкладку.
+                if ($n1.Action -ne 'None' -or $n1.Badge -ne 'Installed') { $errors.Add("scenario: installed app has action '$($n1.Action)', badge '$($n1.Badge)'") }
+                Set-DreddPurchaseFilter -Tab 'OnDevice' -Extra 'DeviceOutdated'
+                if ($script:UI.PurGrid.Items.Count -ne 0) { $errors.Add("scenario: 'Update on iPhone' filter shows $($script:UI.PurGrid.Items.Count) rows") }
+                Set-DreddPurchaseFilter -Tab 'All'
+                if ($script:UI.PurGrid.Items.Count -ne $script:PurchaseRows.Count) { $errors.Add('scenario: filter reset does not show all purchases') }
             }
             Hide-DreddToast
             # Wi-Fi: второе устройство только по сети.

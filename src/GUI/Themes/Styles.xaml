@@ -231,6 +231,36 @@
     </Setter>
   </Style>
 
+  <!-- Главные вкладки «Покупок»: кнопки-сегменты в общей рамке, активная залита -->
+  <Style x:Key="SegTab" TargetType="RadioButton">
+    <Setter Property="Foreground" Value="{DynamicResource Brush.TextMuted}"/>
+    <Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="RadioButton">
+          <Border x:Name="b" Background="Transparent" CornerRadius="5" Padding="12,4,12,5">
+            <ContentPresenter VerticalAlignment="Center" TextBlock.Foreground="{TemplateBinding Foreground}"/>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter Property="Foreground" Value="{DynamicResource Brush.Text}"/>
+            </Trigger>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+              <Setter Property="Foreground" Value="{DynamicResource Brush.Text}"/>
+              <Setter TargetName="b" Property="Background" Value="{DynamicResource Brush.Hover}"/>
+            </Trigger>
+            <Trigger Property="IsChecked" Value="True">
+              <Setter TargetName="b" Property="Background" Value="{DynamicResource Brush.Selected}"/>
+              <Setter Property="Foreground" Value="{DynamicResource Brush.Text}"/>
+              <Setter Property="FontWeight" Value="SemiBold"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
   <!-- Поля ввода (Tag = подсказка-плейсхолдер) -->
   <Style TargetType="TextBox">
     <Setter Property="Foreground" Value="{DynamicResource Brush.Text}"/>
