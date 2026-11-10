@@ -200,6 +200,26 @@ namespace IPADredd.Gui
         public string DeviceDetail { get { return _deviceDetail; } set { Set(ref _deviceDetail, value, "DeviceDetail"); } }
         public int DeviceOrder { get { return _deviceOrder; } set { Set(ref _deviceOrder, value, "DeviceOrder"); } }
 
+        // Новый вид строки (4.6): Badge — плашка «На iPhone» (Installed, Outdated, Missing, Unknown, NeedIos или пусто);
+        // Action — главное действие (Install, Update, Blocked, Download, Cancel, None) для вида кнопки;
+        // SubText — «разработчик · куплено …»; Note — заметка вместо него (загрузка, ошибка, нет в App Store);
+        // IsOnPc — файл IPA скачан на компьютер.
+        private string _badge = "", _action = "None", _subText = "", _note = "";
+        private bool _isOnPc;
+        public string Badge { get { return _badge; } set { Set(ref _badge, value, "Badge"); OnChanged("HasBadge"); } }
+        public bool HasBadge { get { return !string.IsNullOrEmpty(_badge); } }
+        public string Action { get { return _action; } set { Set(ref _action, value, "Action"); OnChanged("HasAction"); } }
+        public bool HasAction { get { return !string.IsNullOrEmpty(_action) && _action != "None"; } }
+        public string SubText { get { return _subText; } set { Set(ref _subText, value, "SubText"); } }
+        public string Note { get { return _note; } set { Set(ref _note, value, "Note"); OnChanged("HasNote"); OnChanged("NoNote"); } }
+        public bool HasNote { get { return !string.IsNullOrEmpty(_note); } }
+        public bool NoNote { get { return string.IsNullOrEmpty(_note); } }
+        public bool IsOnPc { get { return _isOnPc; } set { Set(ref _isOnPc, value, "IsOnPc"); } }
+        // Подпись и подсказка метки «ПК» (локализация задаётся из PowerShell).
+        private string _pcText = "", _pcHint = "";
+        public string PcText { get { return _pcText; } set { Set(ref _pcText, value, "PcText"); } }
+        public string PcHint { get { return _pcHint; } set { Set(ref _pcHint, value, "PcHint"); } }
+
         public string IconPath
         {
             get { return _iconPath; }

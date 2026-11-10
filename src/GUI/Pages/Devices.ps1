@@ -80,6 +80,8 @@ function Start-DreddDeviceScan {
         Resume-DreddPendingInstall
         # Совместимость с iOS найденного iPhone — в «Покупках».
         if (Get-Command Update-DreddPurchaseStatuses -ErrorAction SilentlyContinue) { Update-DreddPurchaseStatuses }
+        # iPhone найден и покупки загружены — сравнение запускается само.
+        if (Get-Command Start-DreddDeviceAutoCompare -ErrorAction SilentlyContinue) { Start-DreddDeviceAutoCompare }
     } -OnError {
         param($m)
         $script:DeviceScanTask = $null

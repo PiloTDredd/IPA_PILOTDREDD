@@ -59,7 +59,7 @@ Export-ModuleMember -Function @(
     # Purchase library
     'Get-DreddAccountKey', 'Get-DreddPurchaseCachePath', 'Get-DreddIconPath', 'ConvertTo-DreddCountryCode', 'Compare-DreddVersion',
     'Read-DreddPurchaseLibrary', 'Save-DreddPurchaseLibrary', 'Invoke-DreddStoreLookup', 'Merge-DreddPurchaseLookup',
-    'Update-DreddPurchaseLibrary', 'Set-DreddPurchaseAttempt', 'Get-DreddPurchaseStatus', 'Save-DreddIcons',
+    'Update-DreddPurchaseLibrary', 'Set-DreddPurchaseAttempt', 'Get-DreddPurchaseStatus', 'Get-DreddPurchaseDeviceBadge', 'Get-DreddPurchaseTabs', 'Get-DreddPurchaseRowAction', 'Save-DreddIcons',
     # Library
     'Get-DreddIpaMetadata', 'Get-DreddLibrary', 'Get-DreddSignatureInfo', 'Test-DreddSignatureForDevice', 'Import-DreddIpaToLibrary', 'Get-DreddIpaFileName', 'Get-DreddUniquePath', 'ConvertTo-DreddSafeFileName',
     # Downloads

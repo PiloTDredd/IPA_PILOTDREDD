@@ -894,6 +894,56 @@ Test 'Device apps compared with purchases: App Store ID, bundle id, local IPA, o
     Assert-Equal 'Unknown' $m3['5'].State
 }
 
+Test 'Purchase row rules: device badge and the tabs/filters a purchase belongs to' {
+    $found = [pscustomobject]@{ Id = '1'; Lookup = 'Found'; Version = '3.0'; MinIOS = '17.0'; LastErrorKey = '' }
+    $gone = [pscustomobject]@{ Id = '2'; Lookup = 'Missing'; Version = ''; MinIOS = ''; LastErrorKey = '' }
+
+    # Плашка: результат сравнения как есть; «Нужна iOS N» важнее «нет», но не важнее «стоит на телефоне».
+    Assert-Equal 'Missing' (Get-DreddPurchaseDeviceBadge -App $found -DeviceState 'Missing' -DeviceIos '17.4')
+    Assert-Equal 'NeedIos' (Get-DreddPurchaseDeviceBadge -App $found -DeviceState 'Missing' -DeviceIos '16.7')
+    Assert-Equal 'NeedIos' (Get-DreddPurchaseDeviceBadge -App $found -DeviceState 'Unknown' -DeviceIos '15.8')
+    Assert-Equal 'NeedIos' (Get-DreddPurchaseDeviceBadge -App $found -DeviceState '' -DeviceIos '16.0') 'known before the comparison: one ready device is enough.'
+    Assert-Equal 'Installed' (Get-DreddPurchaseDeviceBadge -App $found -DeviceState 'Installed' -DeviceIos '16.0') 'an installed app is never "needs iOS".'
+    Assert-Equal 'Outdated' (Get-DreddPurchaseDeviceBadge -App $found -DeviceState 'Outdated' -DeviceIos '16.0')
+    Assert-Equal 'Missing' (Get-DreddPurchaseDeviceBadge -App $gone -DeviceState 'Missing' -DeviceIos '12.0') 'no minimum iOS known - no guess.'
+    Assert-Equal 'Missing' (Get-DreddPurchaseDeviceBadge -App $found -DeviceState 'Missing' -DeviceIos '') 'unknown device iOS - no guess.'
+    Assert-Equal '' (Get-DreddPurchaseDeviceBadge -App $found -DeviceState '' -DeviceIos '17.0')
+
+    $tabs = { param($app, $status, $state, $badge) (@(Get-DreddPurchaseTabs -App $app -Status $status -DeviceState $state -Badge $badge) | Sort-Object) -join ',' }
+    Assert-Equal 'All,Available' (& $tabs $found 'Available' '' '')
+    Assert-Equal 'All,Downloaded' (& $tabs $found 'Downloaded' '' '')
+    Assert-Equal 'All,Downloaded,UpdateAvailable' (& $tabs $found 'UpdateAvailable' '' '') 'an outdated IPA is still a downloaded one.'
+    Assert-Equal 'All,Failed,Problems' (& $tabs $found 'Failed' '' '')
+    Assert-Equal 'All,Problems' (& $tabs $found 'Unverified' '' '')
+    Assert-Equal 'All,NotInStore' (& $tabs $gone 'NotInStore' '' '')
+    Assert-Equal 'All,Downloaded,NotInStore' (& $tabs $gone 'Downloaded' '' '') 'a removed app stays in "Not in App Store" after download.'
+    Assert-Equal 'All,Failed,NotInStore,Problems' (& $tabs $gone 'Failed' '' '')
+    # Устройство.
+    Assert-Equal 'All,Available,NotOnDevice' (& $tabs $found 'Available' 'Missing' 'Missing')
+    Assert-Equal 'All,Available,OnDevice' (& $tabs $found 'Available' 'Installed' 'Installed')
+    Assert-Equal 'All,Available,DeviceOutdated,OnDevice' (& $tabs $found 'Available' 'Outdated' 'Outdated')
+    Assert-Equal 'All,Available' (& $tabs $found 'Available' 'Unknown' 'Unknown') 'unmatched apps are neither on nor missing.'
+    Assert-Equal 'All,Available,Incompatible,NotOnDevice' (& $tabs $found 'Available' 'Missing' 'NeedIos')
+    Assert-Equal 'All,Available,Incompatible' (& $tabs $found 'Available' '' 'NeedIos')
+    Assert-Equal 'All,Problems' (& $tabs $found '' '' '') 'no status yet - shown as a problem, never hidden.'
+
+    # Главное действие строки: одна кнопка.
+    Assert-Equal 'Install' (Get-DreddPurchaseRowAction -Status 'Available' -Badge 'Missing')
+    Assert-Equal 'Install' (Get-DreddPurchaseRowAction -Status 'Downloaded' -Badge 'Missing') 'a downloaded IPA still has to be put on the phone.'
+    Assert-Equal 'Install' (Get-DreddPurchaseRowAction -Status 'NotInStore' -Badge 'Unknown') 'unmatched apps can be installed.'
+    Assert-Equal 'Update' (Get-DreddPurchaseRowAction -Status 'Available' -Badge 'Outdated')
+    Assert-Equal 'None' (Get-DreddPurchaseRowAction -Status 'Available' -Badge 'Installed') 'installed and fresh - no button.'
+    Assert-Equal 'None' (Get-DreddPurchaseRowAction -Status 'UpdateAvailable' -Badge 'Installed') 'an old IPA on the PC is not a reason to touch the phone.'
+    Assert-Equal 'Blocked' (Get-DreddPurchaseRowAction -Status 'Available' -Badge 'NeedIos')
+    # Телефона нет — работаем с компьютером.
+    Assert-Equal 'Download' (Get-DreddPurchaseRowAction -Status 'Available' -Badge '')
+    Assert-Equal 'Download' (Get-DreddPurchaseRowAction -Status 'UpdateAvailable' -Badge '')
+    Assert-Equal 'Download' (Get-DreddPurchaseRowAction -Status 'Failed' -Badge '')
+    Assert-Equal 'Download' (Get-DreddPurchaseRowAction -Status 'NotInStore' -Badge '')
+    Assert-Equal 'Download' (Get-DreddPurchaseRowAction -Status 'Unverified' -Badge '')
+    Assert-Equal 'None' (Get-DreddPurchaseRowAction -Status 'Downloaded' -Badge '')
+}
+
 Test 'App update: newer release, same version, foreign URL ignored, notes trimmed' {
     $ctx = New-TestContext
     $cur = Get-DreddVersion

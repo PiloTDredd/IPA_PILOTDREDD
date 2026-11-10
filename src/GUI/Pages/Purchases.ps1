@@ -4,6 +4,8 @@ $script:PurchaseRows = New-Object System.Collections.ObjectModel.ObservableColle
 $script:PurchaseById = @{}        # ID → строка таблицы
 $script:PurchaseApps = @{}        # ID → запись кэша (Read-DreddPurchaseLibrary)
 $script:PurchaseBase = @{}        # ID → статус без учёта очереди (для вкладок)
+$script:PurchaseBadge = @{}       # ID → плашка «На iPhone» (Get-DreddPurchaseDeviceBadge)
+$script:PurchaseTabSet = @{}      # ID → вкладки и фильтры, в которые попадает строка (Get-DreddPurchaseTabs)
 $script:PurchaseLib = $null
 $script:PurchaseEmail = $null     # аккаунт, чья библиотека показана
 $script:PurchaseFilter = 'All'
@@ -20,10 +22,22 @@ $script:DeviceStateOrder = @{ Missing = 0; Outdated = 1; Installed = 2; Unknown 
 
 # Порядок сортировки по статусу: сначала то, что требует действия.
 $script:PurchaseStatusOrder = @{ Running = 0; Queued = 1; UpdateAvailable = 2; Available = 3; Failed = 4; NotInStore = 5; Unverified = 6; Downloaded = 7 }
-$script:PurchaseTabs = [ordered]@{
-    PurTabAll = 'All'; PurTabAvailable = 'Available'; PurTabDownloaded = 'Downloaded'
-    PurTabUpdates = 'UpdateAvailable'; PurTabMissing = 'NotInStore'; PurTabProblems = 'Problems'
-    PurTabNotOnDevice = 'NotOnDevice'; PurTabOnDevice = 'OnDevice'; PurTabDeviceOutdated = 'DeviceOutdated'
+# Четыре главные вкладки; редкое — в меню «Фильтр» (сужает выбранную вкладку). Ключи — из Get-DreddPurchaseTabs.
+$script:PurchaseTabs = [ordered]@{ PurTabAll = 'All'; PurTabNotOnDevice = 'NotOnDevice'; PurTabOnDevice = 'OnDevice'; PurTabDownloaded = 'Downloaded' }
+$script:PurchaseFilterItems = [ordered]@{
+    PurFltDeviceOutdated = 'DeviceOutdated'; PurFltUpdateAvailable = 'UpdateAvailable'; PurFltNotInStore = 'NotInStore'
+    PurFltIncompatible = 'Incompatible'; PurFltFailed = 'Failed'
+}
+$script:PurchaseExtra = ''        # ключ фильтра из меню или ''
+$script:PurchaseFailedCount = 0   # сколько «не удалось скачать» (для «Повторить неудачные» в меню)
+$script:DeviceAutoTried = @{}     # UDID → автосравнение уже запускалось в этом сеансе
+
+function Set-DreddPurchaseFilter {
+    # Вкладка и (необязательно) фильтр — для плиток «Главной», снимков экрана и «Сбросить фильтр».
+    param([string]$Tab = 'All', [string]$Extra = '')
+    $script:PurchaseExtra = $Extra
+    $name = @($script:PurchaseTabs.Keys | Where-Object { $script:PurchaseTabs[$_] -eq $Tab })[0]
+    if ($name -and -not $script:UI[$name].IsChecked) { $script:UI[$name].IsChecked = $true } else { Update-PurchasesView }
 }
 
 function Initialize-PurchasesPage {
@@ -37,6 +51,16 @@ function Initialize-PurchasesPage {
         $u[$name].Tag = $script:PurchaseTabs[$name]
         $u[$name].Add_Checked({ param($s, $e) Safe { $script:PurchaseFilter = $s.Tag; Update-PurchasesView } })
     }
+    foreach ($name in $script:PurchaseFilterItems.Keys) {
+        $u[$name].Tag = $script:PurchaseFilterItems[$name]
+        # Повторный выбор того же фильтра снимает его.
+        $u[$name].Add_Click({ param($s, $e) Safe { $script:PurchaseExtra = if ($script:PurchaseExtra -eq $s.Tag) { '' } else { [string]$s.Tag }; Update-PurchasesView } })
+    }
+    $u.PurFltReset.Add_Click({ Safe { $script:PurchaseExtra = ''; Update-PurchasesView } })
+    $u.PurFilterBtn.Add_Click({ Safe {
+        $m = $script:UI.PurFilterMenu
+        $m.PlacementTarget = $script:UI.PurFilterBtn; $m.Placement = 'Bottom'; $m.IsOpen = $true
+    } })
     # Поиск с небольшой задержкой: фильтр 1000+ строк на каждую букву не нужен.
     $script:PurSearchTimer = New-Object System.Windows.Threading.DispatcherTimer
     $script:PurSearchTimer.Interval = [TimeSpan]::FromMilliseconds(180)
@@ -49,14 +73,14 @@ function Initialize-PurchasesPage {
     $script:PurDeviceColumn = $u.PurGrid.Columns | Where-Object { $_.SortMemberPath -eq 'DeviceOrder' } | Select-Object -First 1
     $u.PurCancelBtn.Add_Click({ Safe { if ($script:PurchaseScanTask) { Stop-DreddTask $script:PurchaseScanTask.Id } } })
     $u.PurEmptyBtn.Add_Click({ Safe { Invoke-DreddPurchaseEmptyAction } })
-    $u.PurDownloadBtn.Add_Click({ Safe { Invoke-DreddPurchaseDownload @($script:UI.PurGrid.SelectedItems) } })
-    $u.PurRetryBtn.Add_Click({ Safe { Invoke-DreddPurchaseDownload @($script:PurchaseRows | Where-Object { $script:PurchaseBase[$_.Id] -eq 'Failed' }) } })
-    $u.PurVersionBtn.Add_Click({ Safe { Invoke-DreddPurchaseVersions } })
-    $u.PurInstallBtn.Add_Click({ Safe { Invoke-DreddPurchaseInstall @($script:UI.PurGrid.SelectedItems) } })
-    $u.PurMenuInstall.Add_Click({ Safe { Invoke-DreddPurchaseInstall @($script:UI.PurGrid.SelectedItems) } })
+    $u.PurMenuRetry.Add_Click({ Safe { Invoke-DreddPurchaseDownload @($script:PurchaseRows | Where-Object { $script:PurchaseBase[$_.Id] -eq 'Failed' }) } })
+    # Панель выбора и меню: массовая установка пропускает то, что уже стоит или не подходит к iOS устройства.
+    $u.PurInstallBtn.Add_Click({ Safe { Invoke-DreddPurchaseInstall @($script:UI.PurGrid.SelectedItems) -SkipUnfit } })
+    $u.PurMenuInstall.Add_Click({ Safe { Invoke-DreddPurchaseInstall @($script:UI.PurGrid.SelectedItems) -SkipUnfit } })
     $u.PurUninstallBtn.Add_Click({ Safe { Invoke-DreddPurchaseUninstall @($script:UI.PurGrid.SelectedItems) } })
     $u.PurMenuUninstall.Add_Click({ Safe { Invoke-DreddPurchaseUninstall @($script:UI.PurGrid.SelectedItems) } })
-    $u.PurShowFileBtn.Add_Click({ Safe { $r = $script:UI.PurGrid.SelectedItem; if ($r -and $r.LocalPath) { Open-DreddPath $r.LocalPath -Select } } })
+    $u.PurSelClearBtn.Add_Click({ Safe { $script:UI.PurGrid.UnselectAll() } })
+    $u.PurSelMoreBtn.Add_Click({ Safe { Show-DreddPurchaseMenu $script:UI.PurSelMoreBtn } })
     $u.PurGrid.Add_SelectionChanged({ Safe { Update-PurchaseButtons } })
     $u.PurGrid.Add_MouseDoubleClick({ param($s, $e) Safe {
         $row = Get-DreddRowFromEvent $e
@@ -72,7 +96,15 @@ function Initialize-PurchasesPage {
         param($s, $e)
         Safe {
             $btn = $e.OriginalSource
-            if ($btn -is [System.Windows.Controls.Button] -and $btn.Tag -is [IPADredd.Gui.PurchaseRow]) { Invoke-DreddPurchaseRowAction $btn.Tag; $e.Handled = $true }
+            if ($btn -is [System.Windows.Controls.Button] -and $btn.Tag -is [IPADredd.Gui.PurchaseRow]) {
+                if ($btn.CommandParameter -eq 'more') {
+                    # «⋯»: меню относится к этой строке, если она не входит в уже выбранные.
+                    $g = $script:UI.PurGrid
+                    if (-not $g.SelectedItems.Contains($btn.Tag)) { $g.SelectedItems.Clear(); $g.SelectedItem = $btn.Tag }
+                    Show-DreddPurchaseMenu $btn
+                } else { Invoke-DreddPurchaseRowAction $btn.Tag }
+                $e.Handled = $true
+            }
         }
     })
     $u.PurMenuDownload.Add_Click({ Safe { Invoke-DreddPurchaseDownload @($script:UI.PurGrid.SelectedItems) } })
@@ -91,6 +123,14 @@ function Initialize-PurchasesPage {
 }
 
 function Show-PurchasesPage { Update-PurchasesView }
+
+function Show-DreddPurchaseMenu {
+    # Меню строки («⋯», правый клик) открывается под кнопкой.
+    param($Target)
+    Update-PurchaseButtons
+    $m = $script:UI.PurMenu
+    $m.PlacementTarget = $Target; $m.Placement = 'Bottom'; $m.IsOpen = $true
+}
 
 function Get-DreddRowFromEvent {
     # Строка таблицы под курсором (двойной клик по заголовку или пустому месту не считается).
@@ -139,6 +179,8 @@ function Set-DreddPurchaseLibrary {
     $script:PurchaseApps = @{}
     $script:PurchaseById = @{}
     $script:PurchaseBase = @{}
+    $script:PurchaseBadge = @{}
+    $script:PurchaseTabSet = @{}
     $script:PurchaseRows.Clear()
     if ($Library) {
         foreach ($a in @($Library.Apps)) {
@@ -156,8 +198,10 @@ function Set-DreddPurchaseLibrary {
             $script:PurchaseRows.Add($row)
         }
         Update-DreddDeviceCompare
-        foreach ($row in $script:PurchaseRows) { Update-DreddPurchaseDeviceInfo $row }
+        $localMap = Get-DreddLocalIpaMap
+        foreach ($row in $script:PurchaseRows) { Update-DreddPurchaseRow $row -LocalMap $localMap }
         Start-DreddIconFetch
+        Start-DreddDeviceAutoCompare
     }
     Update-PurchasesView
     if (Get-Command Update-CatalogStatuses -ErrorAction SilentlyContinue) { Update-CatalogStatuses }
@@ -199,14 +243,19 @@ function Update-DreddPurchaseRow {
 
     $base = Get-DreddPurchaseStatus -App $a -LocalVersion $(if ($local) { $local.Version } else { $null })
     $script:PurchaseBase[$Row.Id] = $base
+    Update-DreddPurchaseTabCache $Row
     $Row.VersionText = switch ($base) {
         'UpdateAvailable' { '{0} → {1}' -f $local.Version, $a.Version }
         'Downloaded' { [string]$local.Version }
         default { if ($a.Version) { [string]$a.Version } else { '—' } }
     }
     $region = if ($script:PurchaseLib -and $script:PurchaseLib.Storefront) { $script:PurchaseLib.Storefront } else { '?' }
+    $Row.IsOnPc = [bool]$local
+    $Row.PcText = T 'Purchases.Pc'
+    $Row.PcHint = if ($local) { (T 'Purchases.PcHint') + "`n" + $local.Path } else { $null }
+    $Row.SubText = if ($Row.PurchaseDateText) { '{0} · {1}' -f $Row.Artist, (TF 'Purchases.Bought' @($Row.PurchaseDateText)) } else { $Row.Artist }
 
-    # Очередь загрузок важнее сохранённого статуса.
+    # Очередь загрузок важнее сохранённого статуса: вместо второй строки — ход загрузки, кнопка — «Отмена».
     $q = $null
     if ($script:Queue) { $q = $script:Queue | Where-Object { $_.AppId -eq $Row.Id -and $_.Status -in 'Queued', 'Running', 'InstallQueued', 'Installing' } | Select-Object -First 1 }
     if ($q -and $q.Status -in 'InstallQueued', 'Installing') {
@@ -215,7 +264,8 @@ function Update-DreddPurchaseRow {
         $Row.IsIndeterminate = $true
         $Row.StatusText = if ($q.Status -eq 'Installing') { TF 'Purchases.St.Installing' @($q.InstallDevice) } else { T 'Status.InstallQueued' }
         $Row.StatusDetail = $null
-        $Row.ActionText = T 'Purchases.Show'
+        $Row.Note = $Row.StatusText
+        $Row.Action = 'None'
         $Row.StatusOrder = $script:PurchaseStatusOrder['Running']
         return
     }
@@ -226,37 +276,55 @@ function Update-DreddPurchaseRow {
         $Row.Progress = $q.Progress
         $Row.StatusText = if ($q.Status -eq 'Running') { if ($q.IsIndeterminate) { T 'Purchases.St.Starting' } else { TF 'Purchases.St.Running' @([int]$q.Progress) } } else { T 'Status.Queued' }
         $Row.StatusDetail = $null
+        $Row.Note = $Row.StatusText
         $Row.ActionText = T 'Common.Cancel'
+        $Row.ActionEnabled = $true
+        $Row.Action = 'Cancel'
         $Row.StatusOrder = $script:PurchaseStatusOrder[$q.Status]
         return
     }
     $Row.ShowProgress = $false
     $Row.Status = $base
     $Row.StatusOrder = $script:PurchaseStatusOrder[$base]
+    # Заметка показывается только там, где есть что сказать; «можно скачать» и «скачано» видно и так (метка «ПК»).
+    $note = ''
     switch ($base) {
-        'Available' { $Row.StatusText = T 'Purchases.St.Available'; $Row.StatusDetail = $null; $Row.ActionText = T 'Purchases.Download' }
+        'Available' { $Row.StatusText = T 'Purchases.St.Available'; $Row.StatusDetail = $null }
         'Downloaded' {
-            $Row.ActionText = T 'Purchases.Show'
             if ($a.Lookup -eq 'Missing') {
                 # Снятое с продажи и уже скачанное — редкая копия, это стоит видеть.
                 $Row.StatusText = T 'Purchases.St.DownloadedMissing'
                 $Row.StatusDetail = TF 'Purchases.Detail.DownloadedMissing' @($local.Path, $region)
+                $note = T 'Purchases.St.NotInStore'
             } else { $Row.StatusText = T 'Purchases.St.Downloaded'; $Row.StatusDetail = $local.Path }
         }
         'UpdateAvailable' {
             $Row.StatusText = TF 'Purchases.St.Update' @($a.Version)
             $Row.StatusDetail = TF 'Purchases.Detail.Update' @($local.Version, $a.Version)
-            $Row.ActionText = T 'Purchases.Update'
         }
-        'NotInStore' { $Row.StatusText = T 'Purchases.St.NotInStore'; $Row.StatusDetail = TF 'Purchases.Detail.NotInStore' @($region); $Row.ActionText = T 'Purchases.Try' }
+        'NotInStore' { $Row.StatusText = T 'Purchases.St.NotInStore'; $Row.StatusDetail = TF 'Purchases.Detail.NotInStore' @($region); $note = $Row.StatusText }
         'Failed' {
             $Row.StatusText = T 'Purchases.St.Failed'
             $when = ''
             try { if ($a.LastAttemptAt) { $when = ([datetime]$a.LastAttemptAt).ToString('g') } } catch { }
             $Row.StatusDetail = (TF 'Purchases.Detail.Failed' @($when)) + "`n" + (Get-DreddErrorText $a.LastErrorKey $a.LastErrorMessage)
-            $Row.ActionText = T 'Purchases.Retry'
+            $note = $Row.StatusText
         }
-        default { $Row.StatusText = T 'Purchases.St.Unverified'; $Row.StatusDetail = T 'Purchases.Detail.Unverified'; $Row.ActionText = T 'Purchases.Download' }
+        default { $Row.StatusText = T 'Purchases.St.Unverified'; $Row.StatusDetail = T 'Purchases.Detail.Unverified'; $note = $Row.StatusText }
+    }
+    $Row.Note = $note
+
+    # Одна кнопка — главное действие строки (правило в ядре).
+    $badge = [string]$script:PurchaseBadge[$Row.Id]
+    $action = Get-DreddPurchaseRowAction -Status $base -Badge $badge
+    $Row.Action = $action
+    $Row.ActionEnabled = $action -ne 'Blocked'
+    $Row.ActionText = switch ($action) {
+        'Install' { T 'Purchases.ToDevice' }
+        'Update' { T 'Purchases.Update' }
+        'Blocked' { $Row.DeviceText }
+        'Download' { if ($base -eq 'Failed') { T 'Purchases.Retry' } elseif ($base -eq 'NotInStore') { T 'Purchases.Try' } else { T 'Purchases.Download' } }
+        default { '' }
     }
 }
 
@@ -278,63 +346,52 @@ function Update-DreddPurchaseFromQueue {
 
 # ---------------- Представление ----------------
 
+function Update-DreddPurchaseTabCache {
+    # Вкладки и фильтры строки считаются в ядре (Get-DreddPurchaseTabs) при каждом изменении статуса или состояния на iPhone.
+    param([IPADredd.Gui.PurchaseRow]$Row)
+    $a = $script:PurchaseApps[$Row.Id]
+    if (-not $a -or -not $script:PurchaseBase.ContainsKey($Row.Id)) { return }
+    $script:PurchaseTabSet[$Row.Id] = @(Get-DreddPurchaseTabs -App $a -Status $script:PurchaseBase[$Row.Id] -DeviceState $Row.DeviceState -Badge $script:PurchaseBadge[$Row.Id])
+}
+
 function Test-DreddPurchaseVisible {
     param($Row)
-    $base = $script:PurchaseBase[$Row.Id]
-    $ok = switch ($script:PurchaseFilter) {
-        'All' { $true }
-        'Downloaded' { $base -in 'Downloaded', 'UpdateAvailable' }
-        'Problems' { $base -in 'Failed', 'Unverified' }
-        # Вкладка «Нет в App Store» — все снятые с продажи, в том числе уже скачанные.
-        'NotInStore' { Test-DreddPurchaseMissing $Row.Id }
-        'NotOnDevice' { $Row.DeviceState -eq 'Missing' }
-        'OnDevice' { $Row.DeviceState -in 'Installed', 'Outdated' }
-        'DeviceOutdated' { $Row.DeviceState -eq 'Outdated' }
-        default { $base -eq $script:PurchaseFilter }
-    }
-    if (-not $ok) { return $false }
+    $tabs = $script:PurchaseTabSet[$Row.Id]
+    if ($script:PurchaseFilter -ne 'All' -and $tabs -notcontains $script:PurchaseFilter) { return $false }
+    if ($script:PurchaseExtra -and $tabs -notcontains $script:PurchaseExtra) { return $false }
     $q = $script:PurchaseQuery
     if ([string]::IsNullOrEmpty($q)) { return $true }
     return ([string]$Row.SearchText).IndexOf($q, [StringComparison]::OrdinalIgnoreCase) -ge 0
 }
 
-function Test-DreddPurchaseMissing {
-    param([string]$Id)
-    $a = $script:PurchaseApps[$Id]
-    return ($a -and $a.Lookup -eq 'Missing')
-}
-
 function Update-PurchaseCounts {
-    $c = @{ All = 0; Available = 0; Downloaded = 0; UpdateAvailable = 0; NotInStore = 0; Problems = 0; NotOnDevice = 0; OnDevice = 0; DeviceOutdated = 0 }
-    foreach ($row in $script:PurchaseRows) {
-        switch ($row.DeviceState) {
-            'Missing' { $c.NotOnDevice++ }
-            'Installed' { $c.OnDevice++ }
-            'Outdated' { $c.OnDevice++; $c.DeviceOutdated++ }
-        }
-    }
-    foreach ($id in $script:PurchaseBase.Keys) {
-        $c.All++
-        if (Test-DreddPurchaseMissing $id) { $c.NotInStore++ }
-        switch ($script:PurchaseBase[$id]) {
-            'Available' { $c.Available++ }
-            'Downloaded' { $c.Downloaded++ }
-            'UpdateAvailable' { $c.Downloaded++; $c.UpdateAvailable++ }
-            'NotInStore' { }
-            default { $c.Problems++ }
-        }
-    }
+    $c = @{ All = 0; Available = 0; Downloaded = 0; UpdateAvailable = 0; NotInStore = 0; Problems = 0; Failed = 0; NotOnDevice = 0; OnDevice = 0; DeviceOutdated = 0; Incompatible = 0 }
+    foreach ($tabs in $script:PurchaseTabSet.Values) { foreach ($t in $tabs) { $c[$t]++ } }
     foreach ($name in $script:PurchaseTabs.Keys) {
         $key = $script:PurchaseTabs[$name]
         $sp = New-Object System.Windows.Controls.StackPanel
         $sp.Orientation = 'Horizontal'
         $t1 = New-Object System.Windows.Controls.TextBlock; $t1.Text = T "Purchases.Tab.$key"
-        $t2 = New-Object System.Windows.Controls.TextBlock; $t2.Text = [string]$c[$key]; $t2.Margin = '6,0,0,0'; $t2.Opacity = 0.6
-        [void]$sp.Children.Add($t1); [void]$sp.Children.Add($t2)
+        [void]$sp.Children.Add($t1)
+        # Число для вкладок устройства — только после сравнения: «0» до него читалось бы как «на iPhone ничего нет».
+        if ($key -notin 'NotOnDevice', 'OnDevice' -or $script:DeviceCompare) {
+            $t2 = New-Object System.Windows.Controls.TextBlock; $t2.Text = [string]$c[$key]; $t2.Margin = '6,0,0,0'; $t2.Opacity = 0.6
+            [void]$sp.Children.Add($t2)
+        }
         $script:UI[$name].Content = $sp
-        # Пустые вкладки (кроме «Все») прячем, чтобы не было лишнего.
-        $script:UI[$name].Visibility = if ($key -eq 'All' -or $c[$key] -gt 0 -or $script:PurchaseFilter -eq $key) { 'Visible' } else { 'Collapsed' }
     }
+    # Меню «Фильтр»: счётчик справа, выбранный пункт отмечен; пустые пункты неактивны.
+    foreach ($name in $script:PurchaseFilterItems.Keys) {
+        $key = $script:PurchaseFilterItems[$name]
+        $on = $script:PurchaseExtra -eq $key
+        $script:UI[$name].Header = $(if ($on) { [string][char]0x2713 + ' ' } else { '' }) + (T "Purchases.Flt.$key")
+        $script:UI[$name].InputGestureText = [string]$c[$key]
+        $script:UI[$name].IsEnabled = $on -or $c[$key] -gt 0
+    }
+    $script:UI.PurFltReset.IsEnabled = [bool]$script:PurchaseExtra
+    $script:UI.PurFilterText.Text = if ($script:PurchaseExtra) { T "Purchases.Flt.$($script:PurchaseExtra)" } else { T 'Purchases.Filter' }
+    $script:UI.PurFilterBtn.SetResourceReference([System.Windows.Controls.Control]::BorderBrushProperty, $(if ($script:PurchaseExtra) { 'Brush.Accent' } else { 'Brush.Border' }))
+    $script:PurchaseFailedCount = $c.Failed
     Update-DreddHome 'Tiles'
 }
 
@@ -356,23 +413,27 @@ function Update-PurchasesView {
     $u.PurCancelBtn.Visibility = if ($scanning) { 'Visible' } else { 'Collapsed' }
     $u.PurSearch.IsEnabled = $script:PurchaseRows.Count -gt 0
 
-    # Строка состояния сканирования справа от поиска.
+    # Шапка слева: «Приложений: N · обновлено …» (во время сканирования — его шаг).
     $info = ''
     if ($scanning) { $info = if ($script:PurchaseScanStep) { $script:PurchaseScanStep } else { T 'Purchases.Step.history' } }
     elseif ($script:PurchaseLib -and $script:PurchaseLib.ScannedAt) {
         $when = $script:PurchaseLib.ScannedAt
         try { $when = ([datetime]$script:PurchaseLib.ScannedAt).ToString('g') } catch { }
-        $info = TF 'Purchases.ScannedAt' @($when)
+        $info = TF 'Purchases.Info' @($script:PurchaseRows.Count, $when)
         if ($script:PurchaseLib.Storefront) { $info += ' · ' + (TF 'Dash.Storefront' @($script:PurchaseLib.Storefront)) }
         if (-not $script:PurchaseLib.LookupOk) { $info += ' · ' + (T 'Purchases.LookupPartial') }
     }
-    if ($script:DeviceAppsTask) { $info = TF 'Purchases.DevScanning' @($script:DeviceAppsTask.DeviceName) }
-    elseif ($script:DeviceCompare -and -not $scanning) {
-        $dc = TF 'Purchases.DevInfo' @($script:DeviceCompare.Name, $script:DeviceCompare.At.ToString('t'))
-        $info = if ($info) { "$info · $dc" } else { $dc }
-    }
-    $u.PurScanInfo.Text = $info
-    $u.PurScanInfo.ToolTip = if ($info) { $info } else { $null }
+    $u.PurInfoText.Text = $info
+    $u.PurInfoText.ToolTip = if ($info) { $info } else { $null }
+
+    # Шапка справа: с каким iPhone сравнено и ссылка «Сравнить снова» (до сравнения — «Сравнить с iPhone»).
+    $devInfo = ''
+    if ($script:DeviceAppsTask) { $devInfo = TF 'Purchases.DevScanning' @($script:DeviceAppsTask.DeviceName) }
+    elseif ($script:DeviceCompare) { $devInfo = TF 'Purchases.DevInfo' @($script:DeviceCompare.Name, $script:DeviceCompare.At.ToString('t')) }
+    $u.PurDevInfo.Text = $devInfo
+    $u.PurDevDot.Visibility = if ($script:DeviceCompare -and -not $script:DeviceAppsTask) { 'Visible' } else { 'Collapsed' }
+    $u.PurDeviceBtnText.Text = if ($script:DeviceCompare) { T 'Purchases.DeviceRescan' } else { T 'Purchases.DeviceScan' }
+    $u.PurDeviceBtn.Visibility = if ($u.PurDeviceBtn.IsEnabled) { 'Visible' } else { 'Collapsed' }
 
     # Пустые состояния: одно понятное действие.
     $title = $null; $text = ''; $btn = $null; $busy = $false
@@ -384,7 +445,13 @@ function Update-PurchasesView {
         elseif ($script:PurchaseScanError) { $title = T 'Purchases.Empty.ErrorTitle'; $text = $script:PurchaseScanError; $btn = 'Scan' }
         elseif ($script:PurchaseLib) { $title = T 'Purchases.Empty.NoApps'; $text = T 'Purchases.Empty.NoAppsText'; $btn = 'Scan' }
         else { $title = T 'Purchases.Empty.NeverTitle'; $text = T 'Purchases.Empty.NeverText'; $btn = 'Scan' }
-    } elseif ($u.PurGrid.Items.Count -eq 0) { $title = T 'Purchases.Empty.Filtered'; $text = T 'Purchases.Empty.FilteredText' }
+    } elseif ($u.PurGrid.Items.Count -eq 0) {
+        # Вкладки устройства до сравнения пусты не потому, что на iPhone ничего нет.
+        if ($script:PurchaseFilter -in 'NotOnDevice', 'OnDevice' -and -not $script:DeviceCompare) {
+            if ($script:DeviceAppsTask) { $title = TF 'Purchases.DevScanning' @($script:DeviceAppsTask.DeviceName); $busy = $true }
+            else { $title = T 'Purchases.Empty.CompareTitle'; $text = T 'Purchases.Empty.CompareText'; if ($u.PurDeviceBtn.IsEnabled) { $btn = 'Compare' } }
+        } else { $title = T 'Purchases.Empty.Filtered'; $text = T 'Purchases.Empty.FilteredText' }
+    }
 
     if ($title) {
         $u.PurEmptyTitle.Text = $title
@@ -392,7 +459,7 @@ function Update-PurchasesView {
         $u.PurEmptyText.Visibility = if ($text) { 'Visible' } else { 'Collapsed' }
         $u.PurBusy.Visibility = if ($busy) { 'Visible' } else { 'Collapsed' }
         $u.PurEmptyBtn.Tag = $btn
-        if ($btn) { $u.PurEmptyBtn.Content = switch ($btn) { 'Login' { T 'Dash.Login' } 'Setup' { T 'Setup.Install' } default { T 'Purchases.Scan' } }; $u.PurEmptyBtn.Visibility = 'Visible' }
+        if ($btn) { $u.PurEmptyBtn.Content = switch ($btn) { 'Login' { T 'Dash.Login' } 'Setup' { T 'Setup.Install' } 'Compare' { T 'Purchases.DeviceScan' } default { T 'Purchases.Scan' } }; $u.PurEmptyBtn.Visibility = 'Visible' }
         else { $u.PurEmptyBtn.Visibility = 'Collapsed' }
         $u.PurEmptyPanel.Visibility = 'Visible'
     } else { $u.PurEmptyPanel.Visibility = 'Collapsed' }
@@ -404,29 +471,53 @@ function Update-PurchaseButtons {
     $sel = @($u.PurGrid.SelectedItems)
     $dl = @($sel | Where-Object { $script:PurchaseBase[$_.Id] -ne 'Downloaded' -and $_.Status -notin 'Queued', 'Running' })
     $hasTool = [bool]$script:Ctx.Binaries.Ipatool
-    $u.PurDownloadText.Text = if ($dl.Count -gt 1) { TF 'Purchases.DownloadN' @($dl.Count) } else { T 'Purchases.Download' }
-    $u.PurDownloadBtn.IsEnabled = $hasTool -and $dl.Count -gt 0
-    $u.PurVersionBtn.IsEnabled = $hasTool -and $sel.Count -eq 1
-    $allLocal = $sel.Count -gt 0 -and @($sel | Where-Object { $script:PurchaseBase[$_.Id] -ne 'Downloaded' }).Count -eq 0
-    $u.PurInstallText.Text = if ($allLocal) { T 'Purchases.Install' } else { T 'Purchases.DownloadInstall' }
-    $u.PurInstallBtn.IsEnabled = $sel.Count -gt 0 -and [bool]$script:Ctx.Binaries.IdeviceInstaller -and ($allLocal -or $hasTool)
+
+    # Главная кнопка панели: «Обновить на iPhone», если все подходящие — старые версии, иначе «На iPhone».
+    # Уже стоящее и не подходящее к iOS устройства в массовую установку не идёт.
+    $fit = @(Get-DreddPurchaseInstallable $sel)
+    $allLocal = $fit.Count -gt 0 -and @($fit | Where-Object { $script:PurchaseBase[$_.Id] -ne 'Downloaded' }).Count -eq 0
+    $allOld = $fit.Count -gt 0 -and @($fit | Where-Object { $script:PurchaseBadge[$_.Id] -ne 'Outdated' }).Count -eq 0
+    $label = if ($allOld) { 'Purchases.UpdateOnDevice' } else { 'Purchases.ToDevice' }
+    $u.PurInstallText.Text = if ($fit.Count -gt 1) { TF ($label + 'N') @($fit.Count) } else { T $label }
+    $u.PurInstallBtn.IsEnabled = $fit.Count -gt 0 -and [bool]$script:Ctx.Binaries.IdeviceInstaller -and ($allLocal -or $hasTool)
+    # Ставить нечего (всё выбранное уже на iPhone или не подходит) — кнопку не показываем вовсе.
+    $u.PurInstallBtn.Visibility = if ($fit.Count -gt 0) { 'Visible' } else { 'Collapsed' }
     $u.PurMenuInstall.Header = $u.PurInstallText.Text
     $u.PurMenuInstall.IsEnabled = $u.PurInstallBtn.IsEnabled
-    $u.PurShowFileBtn.IsEnabled = $sel.Count -eq 1 -and [bool]$sel[0].LocalPath
+
     $onDev = @(Get-DreddPurchaseOnDevice $sel)
     $u.PurUninstallBtn.Visibility = if ($onDev.Count -gt 0) { 'Visible' } else { 'Collapsed' }
     $u.PurUninstallBtn.IsEnabled = $onDev.Count -gt 0 -and [bool]$script:Ctx.Binaries.IdeviceInstaller -and -not $script:UninstallTask
     $u.PurUninstallText.Text = if ($onDev.Count -gt 1) { TF 'Purchases.UninstallN' @($onDev.Count) } else { T 'Purchases.Uninstall' }
     $u.PurMenuUninstall.Visibility = $u.PurUninstallBtn.Visibility
     $u.PurMenuUninstall.IsEnabled = $u.PurUninstallBtn.IsEnabled
-    $failed = @($script:PurchaseBase.Values | Where-Object { $_ -eq 'Failed' }).Count
-    $u.PurRetryBtn.Visibility = if ($failed -gt 0) { 'Visible' } else { 'Collapsed' }
-    $u.PurMenuDownload.IsEnabled = $u.PurDownloadBtn.IsEnabled
-    $u.PurMenuVersion.IsEnabled = $u.PurVersionBtn.IsEnabled
-    $u.PurMenuShow.IsEnabled = $u.PurShowFileBtn.IsEnabled
+
+    $u.PurMenuDownload.Header = if ($dl.Count -gt 1) { '{0} ({1})' -f (T 'Catalog.Download'), $dl.Count } else { T 'Catalog.Download' }
+    $u.PurMenuDownload.IsEnabled = $hasTool -and $dl.Count -gt 0
+    $u.PurMenuVersion.IsEnabled = $hasTool -and $sel.Count -eq 1
+    $u.PurMenuShow.IsEnabled = $sel.Count -eq 1 -and [bool]$sel[0].LocalPath
     $u.PurMenuStore.IsEnabled = $sel.Count -eq 1
     $u.PurMenuCopyId.IsEnabled = $sel.Count -gt 0
-    $u.PurSelText.Text = if ($sel.Count -gt 0) { TF 'Purchases.Selected' @($sel.Count, $u.PurGrid.Items.Count) } elseif ($script:PurchaseRows.Count -gt 0) { TF 'Purchases.Shown' @($u.PurGrid.Items.Count, $script:PurchaseRows.Count) } else { '' }
+    $failed = [int]$script:PurchaseFailedCount
+    $u.PurMenuRetry.Visibility = if ($failed -gt 0) { 'Visible' } else { 'Collapsed' }
+    $u.PurMenuRetry.Header = '{0} ({1})' -f (T 'Purchases.RetryFailed'), $failed
+
+    # Низ: без выбора — счётчик и подсказка, при выборе — панель действий.
+    if ($sel.Count -gt 0) {
+        $u.PurSelCount.Text = TF 'Purchases.SelCount' @($sel.Count)
+        $names = @($sel | Select-Object -First 3 | ForEach-Object { $_.Name })
+        $u.PurSelNames.Text = ($names -join ', ') + $(if ($sel.Count -gt 3) { ' ' + (TF 'Purchases.AndMore' @($sel.Count - 3)) } else { '' })
+        $u.PurSelBar.Visibility = 'Visible'; $u.PurFootPanel.Visibility = 'Collapsed'
+    } else {
+        $u.PurSelBar.Visibility = 'Collapsed'; $u.PurFootPanel.Visibility = 'Visible'
+        $u.PurSelText.Text = if ($script:PurchaseRows.Count -gt 0) { (TF 'Purchases.Shown' @($u.PurGrid.Items.Count, $script:PurchaseRows.Count)) + ' · ' + (T 'Purchases.FootHint') } else { '' }
+    }
+}
+
+function Get-DreddPurchaseInstallable {
+    # Что из выбранного есть смысл ставить на iPhone: не стоит там в свежей версии и подходит к его iOS.
+    param([object[]]$Rows)
+    return @($Rows | Where-Object { $_ -and $script:PurchaseBadge[$_.Id] -notin 'Installed', 'NeedIos' -and $_.Status -notin 'Queued', 'Running' })
 }
 
 # ---------------- Действия ----------------
@@ -436,10 +527,12 @@ function Invoke-DreddPurchaseEmptyAction {
         'Login' { Show-DreddPage 'Accounts'; [void]$script:UI.AccLoginEmail.Focus() }
         'Scan' { Start-DreddPurchaseScan }
         'Setup' { Start-DreddUpdateCheck -InstallNow }
+        'Compare' { Start-DreddDeviceAppsScan }
     }
 }
 
 function Invoke-DreddPurchaseRowAction {
+    # Кнопка строки и двойной клик: главное действие (Get-DreddPurchaseRowAction), во время загрузки — отмена.
     param([IPADredd.Gui.PurchaseRow]$Row)
     if (-not $Row) { return }
     if ($Row.Status -in 'Queued', 'Running') {
@@ -447,8 +540,14 @@ function Invoke-DreddPurchaseRowAction {
         if ($q) { Stop-DreddDownloadItem $q }
         return
     }
-    if ($script:PurchaseBase[$Row.Id] -eq 'Downloaded') { if ($Row.LocalPath) { Open-DreddPath $Row.LocalPath -Select }; return }
-    Invoke-DreddPurchaseDownload @($Row)
+    switch ($Row.Action) {
+        'Install' { Invoke-DreddPurchaseInstall @($Row) }
+        'Update' { Invoke-DreddPurchaseInstall @($Row) }
+        'Download' { Invoke-DreddPurchaseDownload @($Row) }
+        'Blocked' { }
+        # Кнопки нет (стоит на iPhone или уже скачано): двойной клик показывает файл, если он есть.
+        default { if ($Row.LocalPath) { Open-DreddPath $Row.LocalPath -Select } }
+    }
 }
 
 function Invoke-DreddPurchaseDownload {
@@ -464,7 +563,18 @@ function Invoke-DreddPurchaseDownload {
 
 function Invoke-DreddPurchaseInstall {
     # Скачанное — сразу на iPhone; остальное (и «есть обновление») — скачать, затем установить. Без --purchase.
-    param([object[]]$Rows)
+    # -SkipUnfit (массовая установка): пропустить то, что уже стоит на iPhone или не подходит к его iOS, и сказать об этом.
+    param([object[]]$Rows, [switch]$SkipUnfit)
+    if ($SkipUnfit) {
+        $all = @($Rows | Where-Object { $_ })
+        $Rows = @(Get-DreddPurchaseInstallable $all)
+        $skipped = $all.Count - $Rows.Count
+        if ($skipped -gt 0) { Add-DreddLog -Level Warning -Area 'Install' -Message (TF 'Purchases.Skipped' @($skipped)) }
+        if ($Rows.Count -eq 0) {
+            if ($skipped -gt 0) { Show-DreddToast -Kind Info -Title (TF 'Purchases.Skipped' @($skipped)) -AutoHideMs 6000 }
+            return
+        }
+    }
     $apps = @($Rows | Where-Object { $_ } | ForEach-Object {
         [pscustomobject]@{ Id = $_.Id; Name = $_.Name; Local = $(if ($script:PurchaseBase[$_.Id] -eq 'Downloaded') { $_.LocalPath } else { $null }) }
     })
@@ -495,7 +605,7 @@ function Start-DreddPurchaseScan {
         param($item)
         if ($item.Type -ne 'status') { return }
         $script:PurchaseScanStep = if ($item.Message -eq 'lookup' -and $item.Value) { TF 'Purchases.Step.lookupN' @($item.Value.Done, $item.Value.Total) } else { T "Purchases.Step.$($item.Message)" }
-        $script:UI.PurScanInfo.Text = $script:PurchaseScanStep
+        $script:UI.PurInfoText.Text = $script:PurchaseScanStep
     } -OnComplete {
         param($r, $t)
         $script:PurchaseScanTask = $null
@@ -572,10 +682,20 @@ function Update-DreddPurchaseDeviceInfo {
     param([IPADredd.Gui.PurchaseRow]$Row)
     $a = $script:PurchaseApps[$Row.Id]
     $dev = Get-DreddPurchaseTargetDevice
-    if (-not $a -or -not $dev) { $Row.DeviceState = ''; $Row.DeviceText = ''; $Row.DeviceDetail = $null; $Row.DeviceOrder = 9; return }
+    if (-not $a -or -not $dev) {
+        $Row.DeviceState = ''; $Row.DeviceText = ''; $Row.DeviceDetail = $null; $Row.DeviceOrder = 9
+        $Row.Badge = ''
+        $script:PurchaseBadge[$Row.Id] = ''
+        Update-DreddPurchaseTabCache $Row
+        return
+    }
     $m = $script:DeviceMap[$Row.Id]
     $state = if ($script:DeviceCompare -and $m) { $m.State } else { '' }
+    $badge = Get-DreddPurchaseDeviceBadge -App $a -DeviceState $state -DeviceIos $dev.Ios
     $Row.DeviceState = $state
+    $Row.Badge = $badge
+    $script:PurchaseBadge[$Row.Id] = $badge
+    Update-DreddPurchaseTabCache $Row
     $Row.DeviceOrder = if ($state) { $script:DeviceStateOrder[$state] } else { 9 }
     $text = ''; $detail = $null
     switch ($state) {
@@ -585,7 +705,7 @@ function Update-DreddPurchaseDeviceInfo {
         'Unknown' { $text = T 'Purchases.Dev.Unknown'; $detail = T 'Purchases.DevDetail.Unknown' }
     }
     # Не установлено и не пойдёт на iOS этого устройства — важнее, чем «нет».
-    if ($state -notin 'Installed', 'Outdated' -and $a.MinIOS -and (Test-DreddIosCompatible -MinIOS $a.MinIOS -DeviceVersion $dev.Ios) -eq $false) {
+    if ($badge -eq 'NeedIos') {
         $text = TF 'Purchases.Dev.NeedIos' @($a.MinIOS)
         $need = TF 'Purchases.DevDetail.NeedIos' @($a.MinIOS, $dev.Name, $dev.Ios)
         $detail = if ($detail) { "$detail`n$need" } else { $need }
@@ -595,16 +715,23 @@ function Update-DreddPurchaseDeviceInfo {
 }
 
 function Start-DreddDeviceAppsScan {
-    # «Сравнить с iPhone»: список приложений устройства → сопоставление с покупками → вкладка «Нет на iPhone».
+    <#
+      «Сравнить с iPhone»: список приложений устройства → сопоставление с покупками.
+      По кнопке: при необходимости ищет iPhone, по итогу открывает «Нет на iPhone» и показывает уведомление.
+      -Device (автосравнение): уже найденное устройство; тихо — без уведомлений и смены вкладки, итог только в журнале.
+    #>
+    param($Device)
     if ($script:DeviceAppsTask) { return }
+    $auto = [bool]$Device
     if ($script:PurchaseRows.Count -eq 0) {
-        Show-DreddToast -Kind Info -Title (T 'Purchases.DevNeedLibrary') -Text (T 'Purchases.DevNeedLibraryText') -AutoHideMs 6000
+        if (-not $auto) { Show-DreddToast -Kind Info -Title (T 'Purchases.DevNeedLibrary') -Text (T 'Purchases.DevNeedLibraryText') -AutoHideMs 6000 }
         return
     }
-    $dev = Get-DreddInstallTarget -Retry { Start-DreddDeviceAppsScan }
+    $dev = if ($auto) { $Device } else { Get-DreddInstallTarget -Retry { Start-DreddDeviceAppsScan } }
     if (-not $dev) { return }
-    Hide-DreddToast
-    $script:DeviceAppsTask = Start-DreddTask -Name (T 'Task.DeviceApps') -Arguments @{ Udid = $dev.Udid; Connection = $dev.Connection } -Script {
+    if (-not $auto) { Hide-DreddToast }
+    $script:DeviceAutoTried[$dev.Udid] = $true
+    $script:DeviceAppsTask = Start-DreddTask -Name (T 'Task.DeviceApps') -Silent:$auto -Arguments @{ Udid = $dev.Udid; Connection = $dev.Connection } -Script {
         Get-DreddDeviceApps -Context $Context -Udid $A.Udid -Connection $A.Connection -Reporter $Reporter -CancellationToken $Token
     } -OnComplete {
         param($r, $t)
@@ -618,25 +745,42 @@ function Start-DreddDeviceAppsScan {
             }
             $text = TF 'Purchases.DevDoneText' @($n.Installed, $n.Missing, $n.Unknown)
             Add-DreddLog -Level Success -Area 'Devices' -Message ((TF 'Purchases.DevDone' @($t.DeviceName)) + ': ' + $text)
-            if ($n.Missing -gt 0) { $script:UI.PurTabNotOnDevice.IsChecked = $true }
-            Show-DreddToast -Kind Success -Title (TF 'Purchases.DevDone' @($t.DeviceName)) -Text $text -AutoHideMs 8000
+            if (-not $t.Auto) {
+                if ($n.Missing -gt 0) { Set-DreddPurchaseFilter -Tab 'NotOnDevice' }
+                Show-DreddToast -Kind Success -Title (TF 'Purchases.DevDone' @($t.DeviceName)) -Text $text -AutoHideMs 8000
+            }
         } elseif ($r.ErrorKey -ne 'Err.Cancelled') {
             $txt = Get-DreddErrorText $r.ErrorKey $(if ($r.ErrorKey -eq 'Err.DeviceAppsFormat') { '' } else { $r.Message })
-            Add-DreddLog -Level Error -Area 'Devices' -Message ((TF 'Purchases.DevFailed' @($t.DeviceName)) + ': ' + $txt)
-            Show-DreddToast -Kind Error -Title (TF 'Purchases.DevFailed' @($t.DeviceName)) -Text $txt
+            # Автосравнение не мешает уведомлениями: ошибка в журнале, сравнить можно ссылкой в шапке.
+            Add-DreddLog -Level $(if ($t.Auto) { 'Warning' } else { 'Error' }) -Area 'Devices' -Message ((TF 'Purchases.DevFailed' @($t.DeviceName)) + ': ' + $txt)
+            if (-not $t.Auto) { Show-DreddToast -Kind Error -Title (TF 'Purchases.DevFailed' @($t.DeviceName)) -Text $txt }
         }
         Update-PurchasesView
     } -OnError {
         param($m, $t)
         $script:DeviceAppsTask = $null
         Add-DreddLog -Level Error -Area 'Devices' -Message $m
-        Show-DreddToast -Kind Error -Title (TF 'Purchases.DevFailed' @($t.DeviceName)) -Text $m
+        if (-not $t.Auto) { Show-DreddToast -Kind Error -Title (TF 'Purchases.DevFailed' @($t.DeviceName)) -Text $m }
         Update-PurchasesView
     }
     $script:DeviceAppsTask | Add-Member -NotePropertyName Udid -NotePropertyValue $dev.Udid -Force
     $script:DeviceAppsTask | Add-Member -NotePropertyName DeviceName -NotePropertyValue $dev.Name -Force
     $script:DeviceAppsTask | Add-Member -NotePropertyName Ios -NotePropertyValue $dev.IosVersion -Force
+    $script:DeviceAppsTask | Add-Member -NotePropertyName Auto -NotePropertyValue $auto -Force
     Update-PurchasesView
+}
+
+function Start-DreddDeviceAutoCompare {
+    # Сравнение само: iPhone найден (ровно один готовый), покупки загружены, с этим телефоном в этом сеансе ещё не сравнивали.
+    # Самопроверка и снимки экрана управляют сравнением сами.
+    if ($script:SelfTestMode -or $script:DeviceAppsTask -or $script:PurchaseRows.Count -eq 0) { return }
+    if (-not $script:Ctx.Binaries.IdeviceInstaller) { return }
+    $ready = @($script:DeviceRows | Where-Object { $_.Status -eq 'Ready' })
+    if ($ready.Count -ne 1) { return }
+    $dev = $ready[0]
+    if ($script:DeviceAutoTried[$dev.Udid]) { return }
+    if ($script:DeviceCompare -and $script:DeviceCompare.Udid -eq $dev.Udid) { return }
+    Start-DreddDeviceAppsScan -Device $dev
 }
 
 function Get-DreddPurchaseOnDevice {
@@ -707,6 +851,7 @@ function Set-DreddDeviceAppInstalled {
         @([pscustomobject]@{ BundleId = $bundle; Name = ''; Version = $Version; Build = ''; ItemId = $AppId; Synthetic = $true })
     Update-DreddDeviceCompare
     $row = $script:PurchaseById[$AppId]
-    if ($row) { Update-DreddPurchaseDeviceInfo $row }
+    # Строка целиком: вместе с плашкой меняется и кнопка действия.
+    if ($row) { Update-DreddPurchaseRow $row }
     Update-PurchasesView
 }

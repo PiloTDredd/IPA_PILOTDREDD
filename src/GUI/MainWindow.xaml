@@ -27,6 +27,47 @@
         <DataTrigger Binding="{Binding Status}" Value="InstallError"><Setter Property="Foreground" Value="{DynamicResource Brush.Danger}"/></DataTrigger>
       </Style.Triggers>
     </Style>
+    <!-- «Покупки»: плашка «На iPhone» (цвет по Badge строки) и кнопка главного действия (вид по Action). -->
+    <Style x:Key="DeviceChip" TargetType="Border">
+      <Setter Property="CornerRadius" Value="9"/>
+      <Setter Property="Padding" Value="9,1,9,2"/>
+      <Setter Property="HorizontalAlignment" Value="Left"/>
+      <Setter Property="VerticalAlignment" Value="Center"/>
+      <Setter Property="Background" Value="{DynamicResource Brush.Surface2}"/>
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding HasBadge}" Value="False"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+        <DataTrigger Binding="{Binding Badge}" Value="Installed"><Setter Property="Background" Value="{DynamicResource Brush.SuccessSoft}"/></DataTrigger>
+        <DataTrigger Binding="{Binding Badge}" Value="Outdated"><Setter Property="Background" Value="{DynamicResource Brush.OrangeSoft}"/></DataTrigger>
+        <DataTrigger Binding="{Binding Badge}" Value="NeedIos"><Setter Property="Background" Value="{DynamicResource Brush.WarningSoft}"/></DataTrigger>
+      </Style.Triggers>
+    </Style>
+    <Style x:Key="DeviceChipText" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="Foreground" Value="{DynamicResource Brush.TextMuted}"/>
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding Badge}" Value="Installed"><Setter Property="Foreground" Value="{DynamicResource Brush.Success}"/></DataTrigger>
+        <DataTrigger Binding="{Binding Badge}" Value="Outdated"><Setter Property="Foreground" Value="{DynamicResource Brush.Orange}"/></DataTrigger>
+        <DataTrigger Binding="{Binding Badge}" Value="NeedIos"><Setter Property="Foreground" Value="{DynamicResource Brush.Warning}"/></DataTrigger>
+      </Style.Triggers>
+    </Style>
+    <Style x:Key="RowActionButton" TargetType="Button" BasedOn="{StaticResource RowButton}">
+      <Setter Property="Width" Value="104"/>
+      <Setter Property="HorizontalAlignment" Value="Left"/>
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding Action}" Value="Install">
+          <Setter Property="Background" Value="Transparent"/>
+          <Setter Property="BorderBrush" Value="{DynamicResource Brush.Accent}"/>
+          <Setter Property="Foreground" Value="{DynamicResource Brush.Accent}"/>
+          <Setter Property="FontWeight" Value="SemiBold"/>
+        </DataTrigger>
+        <DataTrigger Binding="{Binding Action}" Value="Update">
+          <Setter Property="Background" Value="{DynamicResource Brush.OrangeSoft}"/>
+          <Setter Property="BorderBrush" Value="{DynamicResource Brush.OrangeBorder}"/>
+          <Setter Property="Foreground" Value="{DynamicResource Brush.Orange}"/>
+          <Setter Property="FontWeight" Value="SemiBold"/>
+        </DataTrigger>
+      </Style.Triggers>
+    </Style>
     <Style x:Key="EmptyTitle" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
       <Setter Property="FontSize" Value="15"/>
       <Setter Property="FontWeight" Value="SemiBold"/>
@@ -346,48 +387,76 @@
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
           </Grid.RowDefinitions>
-          <Grid Margin="0,0,0,8">
+          <!-- Шапка: слева «сколько приложений · когда обновлено» и ↻, справа — с каким iPhone сравнено. -->
+          <Grid Margin="0,0,0,10">
             <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*" MaxWidth="460"/>
               <ColumnDefinition Width="*"/>
               <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+              <TextBlock x:Name="PurInfoText" Style="{StaticResource Muted}" FontSize="13" VerticalAlignment="Center"/>
+              <Button x:Name="PurScanBtn" Style="{StaticResource GhostButton}" Margin="6,0,0,0" Padding="6,2" ToolTip="@Purchases.ScanHint">
+                <TextBlock Text="&#xE72C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="13" VerticalAlignment="Center"/>
+              </Button>
+              <Button x:Name="PurCancelBtn" x:Uid="Common.Cancel" Style="{StaticResource GhostButton}" Margin="6,0,0,0" Visibility="Collapsed"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+              <Ellipse x:Name="PurDevDot" Width="8" Height="8" Fill="{DynamicResource Brush.Success}" Margin="0,0,8,0" VerticalAlignment="Center" Visibility="Collapsed"/>
+              <TextBlock x:Name="PurDevInfo" Style="{StaticResource Muted}" FontSize="12" VerticalAlignment="Center" Margin="0,0,10,0"/>
+              <Button x:Name="PurDeviceBtn" Style="{StaticResource LinkButton}" VerticalAlignment="Center" ToolTip="@Purchases.DeviceScanHint">
+                <TextBlock x:Name="PurDeviceBtnText" FontSize="12"/>
+              </Button>
+            </StackPanel>
+          </Grid>
+          <!-- Поиск, четыре главные вкладки и «Фильтр» для редкого. -->
+          <Grid Grid.Row="1" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" MaxWidth="340"/>
               <ColumnDefinition Width="Auto"/>
               <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
             <TextBox x:Name="PurSearch" Tag="@Purchases.Placeholder"/>
-            <TextBlock x:Name="PurScanInfo" Grid.Column="1" Style="{StaticResource Muted}" FontSize="12" VerticalAlignment="Center" HorizontalAlignment="Right" TextAlignment="Right" Margin="12,0,12,0"/>
-            <Button x:Name="PurCancelBtn" Grid.Column="2" x:Uid="Common.Cancel" Margin="0,0,8,0" Visibility="Collapsed"/>
-            <Button x:Name="PurDeviceBtn" Grid.Column="3" Margin="0,0,8,0" ToolTip="@Purchases.DeviceScanHint">
-              <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE8EA;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" VerticalAlignment="Center"/><TextBlock x:Uid="Purchases.DeviceScan" Margin="8,0,0,0"/></StackPanel>
-            </Button>
-            <Button x:Name="PurScanBtn" Grid.Column="4" Style="{StaticResource PrimaryButton}" ToolTip="@Purchases.ScanHint">
-              <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE72C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Foreground="{DynamicResource Brush.AccentText}" VerticalAlignment="Center"/><TextBlock x:Uid="Purchases.Scan" Margin="8,0,0,0" Foreground="{DynamicResource Brush.AccentText}"/></StackPanel>
+            <Border Grid.Column="1" Margin="12,0,0,0" Padding="3" CornerRadius="7" Background="{DynamicResource Brush.Surface}" BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1">
+              <StackPanel Orientation="Horizontal">
+                <RadioButton x:Name="PurTabAll" Style="{StaticResource SegTab}" GroupName="PurTab" IsChecked="True"/>
+                <RadioButton x:Name="PurTabNotOnDevice" Style="{StaticResource SegTab}" GroupName="PurTab"/>
+                <RadioButton x:Name="PurTabOnDevice" Style="{StaticResource SegTab}" GroupName="PurTab"/>
+                <RadioButton x:Name="PurTabDownloaded" Style="{StaticResource SegTab}" GroupName="PurTab"/>
+              </StackPanel>
+            </Border>
+            <Button x:Name="PurFilterBtn" Grid.Column="2" Margin="8,0,0,0" MinHeight="34">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE71C;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" VerticalAlignment="Center"/>
+                <TextBlock x:Name="PurFilterText" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                <TextBlock Text="&#xE70D;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="10" Margin="8,1,0,0" VerticalAlignment="Center"/>
+              </StackPanel>
+              <Button.ContextMenu>
+                <ContextMenu x:Name="PurFilterMenu">
+                  <MenuItem x:Name="PurFltDeviceOutdated" x:Uid="Purchases.Flt.DeviceOutdated"/>
+                  <MenuItem x:Name="PurFltUpdateAvailable" x:Uid="Purchases.Flt.UpdateAvailable"/>
+                  <MenuItem x:Name="PurFltNotInStore" x:Uid="Purchases.Flt.NotInStore"/>
+                  <MenuItem x:Name="PurFltIncompatible" x:Uid="Purchases.Flt.Incompatible"/>
+                  <MenuItem x:Name="PurFltFailed" x:Uid="Purchases.Flt.Failed"/>
+                  <Separator/>
+                  <MenuItem x:Name="PurFltReset" x:Uid="Purchases.FilterReset"/>
+                </ContextMenu>
+              </Button.ContextMenu>
             </Button>
           </Grid>
-          <WrapPanel Grid.Row="1" Margin="2,0,0,6">
-            <RadioButton x:Name="PurTabAll" Style="{StaticResource FilterTab}" GroupName="PurTab" IsChecked="True"/>
-            <RadioButton x:Name="PurTabAvailable" Style="{StaticResource FilterTab}" GroupName="PurTab"/>
-            <RadioButton x:Name="PurTabDownloaded" Style="{StaticResource FilterTab}" GroupName="PurTab"/>
-            <RadioButton x:Name="PurTabUpdates" Style="{StaticResource FilterTab}" GroupName="PurTab"/>
-            <RadioButton x:Name="PurTabMissing" Style="{StaticResource FilterTab}" GroupName="PurTab"/>
-            <RadioButton x:Name="PurTabProblems" Style="{StaticResource FilterTab}" GroupName="PurTab"/>
-            <RadioButton x:Name="PurTabNotOnDevice" Style="{StaticResource FilterTab}" GroupName="PurTab"/>
-            <RadioButton x:Name="PurTabOnDevice" Style="{StaticResource FilterTab}" GroupName="PurTab"/>
-            <RadioButton x:Name="PurTabDeviceOutdated" Style="{StaticResource FilterTab}" GroupName="PurTab"/>
-          </WrapPanel>
           <Border Grid.Row="2" Style="{StaticResource Card}" Padding="4">
             <Grid>
               <DataGrid x:Name="PurGrid" SelectionMode="Extended" RowHeight="48" CanUserSortColumns="True">
                 <DataGrid.ContextMenu>
                   <ContextMenu x:Name="PurMenu">
-                    <MenuItem x:Name="PurMenuDownload" x:Uid="Purchases.Download" InputGestureText="Enter"/>
                     <MenuItem x:Name="PurMenuInstall" Header="—"/>
-                    <MenuItem x:Name="PurMenuUninstall" x:Uid="Purchases.Uninstall"/>
+                    <MenuItem x:Name="PurMenuDownload" x:Uid="Catalog.Download" InputGestureText="Enter"/>
                     <MenuItem x:Name="PurMenuVersion" x:Uid="Catalog.ChooseVersion"/>
                     <MenuItem x:Name="PurMenuShow" x:Uid="Common.ShowInFolder"/>
+                    <MenuItem x:Name="PurMenuUninstall" x:Uid="Purchases.Uninstall"/>
                     <Separator/>
                     <MenuItem x:Name="PurMenuStore" x:Uid="Purchases.OpenStore"/>
                     <MenuItem x:Name="PurMenuCopyId" x:Uid="Catalog.CopyId" InputGestureText="Ctrl+C"/>
+                    <MenuItem x:Name="PurMenuRetry" x:Uid="Purchases.RetryFailed"/>
                   </ContextMenu>
                 </DataGrid.ContextMenu>
                 <DataGrid.Columns>
@@ -405,37 +474,57 @@
                           </Grid>
                           <StackPanel VerticalAlignment="Center">
                             <TextBlock Text="{Binding Name}" FontWeight="SemiBold" ToolTip="{Binding Name}"/>
-                            <TextBlock Text="{Binding Artist}" Style="{StaticResource Muted}" FontSize="12" Margin="0,1,0,0"/>
+                            <!-- Вторая строка: «разработчик · куплено …» либо заметка (загрузка, ошибка, нет в App Store). -->
+                            <TextBlock Text="{Binding SubText}" Style="{StaticResource Muted}" FontSize="12" Margin="0,1,0,0"
+                                       Visibility="{Binding NoNote, Converter={StaticResource BoolToVis}}"/>
+                            <TextBlock Text="{Binding Note}" Style="{StaticResource StatusText}" FontSize="12" Margin="0,1,0,0" ToolTip="{Binding StatusDetail}"
+                                       Visibility="{Binding HasNote, Converter={StaticResource BoolToVis}}"/>
+                            <ProgressBar Value="{Binding Progress}" IsIndeterminate="{Binding IsIndeterminate}" Maximum="100" Height="3" Margin="0,3,24,0"
+                                         Visibility="{Binding ShowProgress, Converter={StaticResource BoolToVis}}"/>
                           </StackPanel>
                         </DockPanel>
                       </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                   </DataGridTemplateColumn>
-                  <DataGridTextColumn Header="@Col.Version" Binding="{Binding VersionText}" Width="110"/>
-                  <DataGridTextColumn Header="@Col.PurchaseDate" Binding="{Binding PurchaseDateText}" SortMemberPath="SortDate" Width="100"/>
-                  <DataGridTextColumn Header="@Col.Size" Binding="{Binding SizeText}" SortMemberPath="SizeBytes" Width="84"/>
-                  <DataGridTemplateColumn Header="@Col.OnDevice" Width="120" SortMemberPath="DeviceOrder" Visibility="Collapsed">
+                  <DataGridTemplateColumn Header="@Col.Version" Width="150" CanUserSort="False">
                     <DataGridTemplateColumn.CellTemplate>
                       <DataTemplate>
-                        <TextBlock Text="{Binding DeviceText}" ToolTip="{Binding DeviceDetail}" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                      </DataTemplate>
-                    </DataGridTemplateColumn.CellTemplate>
-                  </DataGridTemplateColumn>
-                  <DataGridTemplateColumn Header="@Col.Status" Width="190" SortMemberPath="StatusOrder">
-                    <DataGridTemplateColumn.CellTemplate>
-                      <DataTemplate>
-                        <StackPanel VerticalAlignment="Center" Margin="0,0,10,0">
-                          <TextBlock Text="{Binding StatusText}" Style="{StaticResource StatusText}" ToolTip="{Binding StatusDetail}"/>
-                          <ProgressBar Value="{Binding Progress}" IsIndeterminate="{Binding IsIndeterminate}" Maximum="100" Height="3" Margin="0,5,0,0"
-                                       Visibility="{Binding ShowProgress, Converter={StaticResource BoolToVis}}"/>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                          <TextBlock Text="{Binding VersionText}" VerticalAlignment="Center" ToolTip="{Binding StatusDetail}"/>
+                          <Border CornerRadius="5" Padding="6,0,6,1" Margin="6,0,0,0" VerticalAlignment="Center" Background="{DynamicResource Brush.AccentSoft}"
+                                  ToolTip="{Binding PcHint}" Visibility="{Binding IsOnPc, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="{Binding PcText}" FontSize="11" Foreground="{DynamicResource Brush.Accent}"/>
+                          </Border>
                         </StackPanel>
                       </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                   </DataGridTemplateColumn>
+                  <DataGridTextColumn Header="@Col.Size" Binding="{Binding SizeText}" SortMemberPath="SizeBytes" Width="84"/>
+                  <DataGridTemplateColumn Header="@Col.OnDevice" Width="150" SortMemberPath="DeviceOrder" Visibility="Collapsed">
+                    <DataGridTemplateColumn.CellTemplate>
+                      <DataTemplate>
+                        <Border Style="{StaticResource DeviceChip}" ToolTip="{Binding DeviceDetail}">
+                          <TextBlock Text="{Binding DeviceText}" Style="{StaticResource DeviceChipText}"/>
+                        </Border>
+                      </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                  </DataGridTemplateColumn>
+                  <!-- Одна кнопка — главное действие строки (Get-DreddPurchaseRowAction); всё редкое — в «⋯». -->
                   <DataGridTemplateColumn Width="132" CanUserSort="False">
                     <DataGridTemplateColumn.CellTemplate>
                       <DataTemplate>
-                        <Button Style="{StaticResource RowButton}" Content="{Binding ActionText}" IsEnabled="{Binding ActionEnabled}" Tag="{Binding}" HorizontalAlignment="Left" Focusable="False"/>
+                        <Button Style="{StaticResource RowActionButton}" Content="{Binding ActionText}" IsEnabled="{Binding ActionEnabled}" Tag="{Binding}" CommandParameter="action"
+                                ToolTip="{Binding DeviceDetail}" ToolTipService.ShowOnDisabled="True" Focusable="False"
+                                Visibility="{Binding HasAction, Converter={StaticResource BoolToVis}}"/>
+                      </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                  </DataGridTemplateColumn>
+                  <DataGridTemplateColumn Width="44" CanUserSort="False" CanUserResize="False">
+                    <DataGridTemplateColumn.CellTemplate>
+                      <DataTemplate>
+                        <Button Style="{StaticResource GhostButton}" Tag="{Binding}" CommandParameter="more" Width="32" Padding="0" Focusable="False" HorizontalAlignment="Left">
+                          <TextBlock Text="&#xE712;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="14"/>
+                        </Button>
                       </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                   </DataGridTemplateColumn>
@@ -450,27 +539,42 @@
               </StackPanel>
             </Grid>
           </Border>
-          <Grid Grid.Row="3" Margin="0,10,0,0">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <TextBlock x:Name="PurSelText" Style="{StaticResource Muted}" VerticalAlignment="Center"/>
-            <StackPanel Grid.Column="1" Orientation="Horizontal">
-              <!-- Видна, только когда выбраны приложения, которые стоят на iPhone (после «Сравнить с iPhone»). -->
-              <Button x:Name="PurUninstallBtn" Style="{StaticResource DangerButton}" Margin="0,0,8,0" Visibility="Collapsed">
-                <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE74D;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" VerticalAlignment="Center"/><TextBlock x:Name="PurUninstallText" Margin="8,0,0,0"/></StackPanel>
-              </Button>
-              <Button x:Name="PurRetryBtn" x:Uid="Purchases.RetryFailed" Margin="0,0,8,0"/>
-              <Button x:Name="PurShowFileBtn" x:Uid="Common.ShowInFolder" Margin="0,0,8,0"/>
-              <Button x:Name="PurVersionBtn" x:Uid="Catalog.ChooseVersion" Margin="0,0,8,0"/>
-              <Button x:Name="PurInstallBtn" Margin="0,0,8,0" ToolTip="@Purchases.InstallHint">
-                <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE8EA;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" VerticalAlignment="Center"/><TextBlock x:Name="PurInstallText" Margin="8,0,0,0"/></StackPanel>
-              </Button>
-              <Button x:Name="PurDownloadBtn" Style="{StaticResource PrimaryButton}" MinWidth="150">
-                <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE896;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Foreground="{DynamicResource Brush.AccentText}" VerticalAlignment="Center"/><TextBlock x:Name="PurDownloadText" Margin="8,0,0,0" Foreground="{DynamicResource Brush.AccentText}"/></StackPanel>
-              </Button>
-            </StackPanel>
+          <!-- Низ: без выбора — только счётчик и подсказка; при выборе — панель действий. -->
+          <Grid Grid.Row="3" Margin="0,10,0,0" MinHeight="46">
+            <Grid x:Name="PurFootPanel" VerticalAlignment="Center" Margin="4,0">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <TextBlock x:Name="PurSelText" Style="{StaticResource Muted}" FontSize="12" VerticalAlignment="Center"/>
+              <TextBlock Grid.Column="1" x:Uid="Purchases.FootDbl" Style="{StaticResource Muted}" FontSize="12" VerticalAlignment="Center" Margin="12,0,0,0"/>
+            </Grid>
+            <Border x:Name="PurSelBar" Visibility="Collapsed" CornerRadius="8" Padding="14,6,6,6" Background="{DynamicResource Brush.AccentSoft}" BorderBrush="{DynamicResource Brush.Accent}" BorderThickness="1">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="PurSelCount" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                <TextBlock x:Name="PurSelNames" Grid.Column="1" Style="{StaticResource Muted}" FontSize="12" Margin="12,0" VerticalAlignment="Center"/>
+                <StackPanel Grid.Column="2" Orientation="Horizontal">
+                  <!-- Видна, только когда выбраны приложения, которые стоят на iPhone. -->
+                  <Button x:Name="PurUninstallBtn" Style="{StaticResource DangerButton}" Margin="0,0,8,0" Visibility="Collapsed">
+                    <TextBlock x:Name="PurUninstallText"/>
+                  </Button>
+                  <Button x:Name="PurInstallBtn" Style="{StaticResource PrimaryButton}" MinWidth="150" Margin="0,0,8,0" ToolTip="@Purchases.InstallHint">
+                    <TextBlock x:Name="PurInstallText" Foreground="{DynamicResource Brush.AccentText}"/>
+                  </Button>
+                  <Button x:Name="PurSelMoreBtn" Width="36" Padding="0" Margin="0,0,4,0" ToolTip="@Purchases.More">
+                    <TextBlock Text="&#xE712;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="14"/>
+                  </Button>
+                  <Button x:Name="PurSelClearBtn" Style="{StaticResource GhostButton}" Width="36" Padding="0" MinHeight="30" ToolTip="@Purchases.ClearSel">
+                    <TextBlock Text="&#xE711;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12"/>
+                  </Button>
+                </StackPanel>
+              </Grid>
+            </Border>
           </Grid>
         </Grid>
 
