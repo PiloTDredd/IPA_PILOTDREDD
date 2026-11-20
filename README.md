@@ -1,5 +1,14 @@
 # IPA PILOTDREDD
 
+<p>
+<a href="https://github.com/PiloTDredd/IPA_PILOTDREDD/releases/latest"><img src="https://img.shields.io/github/v/release/PiloTDredd/IPA_PILOTDREDD?style=flat-square&label=%D0%B2%D0%B5%D1%80%D1%81%D0%B8%D1%8F&color=0ea5e9" alt="Версия"></a>
+<a href="https://github.com/PiloTDredd/IPA_PILOTDREDD/releases"><img src="https://img.shields.io/github/downloads/PiloTDredd/IPA_PILOTDREDD/total?style=flat-square&label=%D1%81%D0%BA%D0%B0%D1%87%D0%B8%D0%B2%D0%B0%D0%BD%D0%B8%D0%B9&color=16a34a" alt="Скачиваний"></a>
+<a href="https://github.com/PiloTDredd/IPA_PILOTDREDD/actions/workflows/tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/PiloTDredd/IPA_PILOTDREDD/tests.yml?branch=main&style=flat-square&label=tests" alt="Tests"></a>
+<img src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4?style=flat-square&logo=windows11&logoColor=white" alt="Windows 10 | 11">
+<img src="https://img.shields.io/badge/iPhone%20%C2%B7%20iPad-000000?style=flat-square&logo=apple&logoColor=white" alt="iPhone · iPad">
+<a href="LICENSE"><img src="https://img.shields.io/github/license/PiloTDredd/IPA_PILOTDREDD?style=flat-square&color=64748b" alt="MIT"></a>
+</p>
+
 **Библиотека ваших покупок App Store на Windows.** Войдите в свой Apple ID — и увидите все приложения, которые вы когда-либо покупали или скачивали бесплатно: с иконками и версиями. Подключите iPhone — программа сама покажет, чего на нём нет и что пора обновить. Поставить — одной кнопкой.
 
 ![Главная](docs/images/home_dark.png)
