@@ -175,7 +175,36 @@ function Test-DreddContainsUi {
     return $Text.IndexOf($Query.Trim(), [StringComparison]::OrdinalIgnoreCase) -ge 0
 }
 
+# Светофор «Популярных» (4.7): Files/AppsAvailability.json (ночная проверка, src/Core/Availability.ps1).
+# Метка только для «нет в регионе аккаунта» и «удалено из App Store»; доступное — без метки.
+$script:Availability = $null
+$script:AvailabilityLoaded = $false
+
+function Get-DreddAvailabilityCached {
+    if (-not $script:AvailabilityLoaded) {
+        $script:AvailabilityLoaded = $true
+        try { $script:Availability = Read-DreddAppsAvailability -Context $script:Ctx }
+        catch { $script:Availability = $null; Add-DreddLog -Level Warning -Area 'Lists' -Message ('AppsAvailability.json: ' + $_.Exception.Message) }
+    }
+    return $script:Availability
+}
+
+function Reset-DreddAvailability { $script:AvailabilityLoaded = $false; $script:Availability = $null }
+
+function Get-DreddAvailabilityText {
+    param($Availability, [string]$Id, [string]$Country)
+    $l = Get-DreddAvailabilityLabel -Availability $Availability -Id $Id -Country $Country
+    switch ($l.Label) {
+        'Removed' { return (T 'Avail.Removed') }
+        'OtherRegion' { return (TF 'Avail.OtherRegion' @((@($l.Regions | ForEach-Object { $_.ToUpperInvariant() }) -join ', '))) }
+    }
+    return ''
+}
+
 function Update-CatalogStatuses {
+    $av = Get-DreddAvailabilityCached
+    $cc = if ($script:Account -and $script:Account.Success) { ConvertTo-DreddCountryCode $script:Account.Storefront } else { $null }
+    if (-not $cc) { $cc = 'ru' }
     $purchased = New-Object 'System.Collections.Generic.HashSet[string]'
     $acc = if ($script:Account -and $script:Account.Success) { $script:Account.Email } else { $null }
     if ($acc) { foreach ($p in @(Get-DreddPurchasedApps -Context $script:Ctx -Account $acc)) { [void]$purchased.Add($p.ID) } }
@@ -188,6 +217,11 @@ function Update-CatalogStatuses {
         elseif ($purchased.Contains($r.Id)) { $r.StatusText = T 'Catalog.Purchased' }
         elseif ($haveHistory) { $r.StatusText = T 'Catalog.NotInHistory' }
         else { $r.StatusText = '' }
+        if ($av -and $r.Source -in 'Popular', 'Custom', 'ID') {
+            $a = Get-DreddAvailabilityText $av $r.Id $cc
+            # Метка доступности — первой: колонка узкая, а «удалено» важнее «нет в истории покупок».
+            if ($a) { $r.StatusText = if ($r.StatusText) { $a + ' · ' + $r.StatusText } else { $a } }
+        }
     }
 }
 

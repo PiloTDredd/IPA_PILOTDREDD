@@ -26,7 +26,7 @@ if (-not ('IPADredd.PlistReader' -as [type])) {
 $parts = @(
     'Platform', 'Settings', 'Logging', 'Process', 'Binaries', 'Context',
     'Ipatool', 'Accounts', 'AppLists', 'History', 'Purchases', 'Library', 'Downloads',
-    'Devices', 'Diagnostics', 'RemoteLists', 'Updates', 'Localization'
+    'Devices', 'Diagnostics', 'RemoteLists', 'Updates', 'Localization', 'Batch', 'Availability'
 )
 foreach ($part in $parts) {
     . (Join-Path $script:CoreRoot "$part.ps1")
@@ -74,5 +74,10 @@ Export-ModuleMember -Function @(
     # Updates
     'Get-DreddToolVersion', 'Get-DreddBundleVersion', 'Test-DreddToolUpdate', 'Install-DreddToolUpdate', 'Test-DreddNeedsSetup', 'Test-DreddAppUpdate',
     # Localization
-    'Get-DreddStrings', 'Get-DreddLanguages'
+    'Get-DreddStrings', 'Get-DreddLanguages',
+    # Batch install (4.7)
+    'New-DreddBatch', 'Set-DreddBatchItem', 'Test-DreddBatchDone', 'Get-DreddBatchReport', 'Select-DreddUpdateAll',
+    # Availability of popular apps (4.7)
+    'Get-DreddAvailabilityPath', 'Test-DreddAvailabilityContent', 'Read-DreddAppsAvailability', 'Get-DreddAppsAvailability',
+    'Save-DreddAppsAvailability', 'Get-DreddAvailabilityLabel'
 )

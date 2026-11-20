@@ -10,6 +10,7 @@ if (Test-Path $work) { Remove-Item $work -Recurse -Force }
 New-Item -ItemType Directory (Join-Path $copy 'Files') | Out-Null
 foreach ($i in 'VERSION', 'src', 'tests', 'tools', 'IPA_Dredd.ps1') { Copy-Item (Join-Path $appRoot $i) -Destination $copy -Recurse }
 Copy-Item (Join-Path $appRoot 'Files\AppsList.txt') (Join-Path $copy 'Files')
+if (Test-Path (Join-Path $appRoot 'Files\AppsAvailability.json')) { Copy-Item (Join-Path $appRoot 'Files\AppsAvailability.json') (Join-Path $copy 'Files') }
 
 Import-Module (Join-Path $copy 'src\Core\IPADredd.Core.psm1') -Force -DisableNameChecking
 $ctx = New-DreddContext -AppRoot $copy

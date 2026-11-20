@@ -13,6 +13,8 @@ function Get-DreddDefaultSettings {
         KeychainEnabled        = 'False'
         DebugEnabled           = 'False'
         RemoteListBaseUrl      = 'https://raw.githubusercontent.com/kda2495/IPA_Downloader/refs/heads/main/Files'
+        # Доступность «Популярных» по регионам (4.7): файл, который каждую ночь обновляет GitHub Actions (ветка data).
+        AvailabilityUrl        = 'https://raw.githubusercontent.com/PiloTDredd/IPA_PILOTDREDD/data/AppsAvailability.json'
         UpdateRepo             = 'kda2495/IPA_Downloader'   # первая установка: набор компонентов IPA Downloader
         ToolRepo               = 'Sorvigolova/ipatool'       # обновления ipatool-cpp напрямую
         # Релизы самой программы: при запуске — уведомление «Вышла IPA PILOTDREDD X» (без автоматической замены файлов).

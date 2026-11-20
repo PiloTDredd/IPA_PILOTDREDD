@@ -312,6 +312,15 @@
               </Button>
             </UniformGrid>
 
+            <!-- «Обновить всё на iPhone» (4.7): видна, когда сравнение нашло старые версии -->
+            <Button x:Name="HomeUpdateAllBtn" HorizontalAlignment="Right" Margin="0,-4,0,14" MinHeight="36" Padding="16,4" Visibility="Collapsed"
+                    Background="{DynamicResource Brush.OrangeSoft}" BorderBrush="{DynamicResource Brush.OrangeBorder}" ToolTip="@Purchases.UpdateAllHint">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE895;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="14" Foreground="{DynamicResource Brush.Orange}" VerticalAlignment="Center"/>
+                <TextBlock x:Name="HomeUpdateAllText" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Orange}" Margin="8,0,0,0" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+
             <!-- Текущая загрузка и «Недавно» -->
             <Grid>
               <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
@@ -401,6 +410,13 @@
               <Button x:Name="PurCancelBtn" x:Uid="Common.Cancel" Style="{StaticResource GhostButton}" Margin="6,0,0,0" Visibility="Collapsed"/>
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+              <Button x:Name="PurUpdateAllBtn" MinHeight="28" Padding="12,2" Margin="0,0,14,0" Visibility="Collapsed" VerticalAlignment="Center"
+                      Background="{DynamicResource Brush.OrangeSoft}" BorderBrush="{DynamicResource Brush.OrangeBorder}" ToolTip="@Purchases.UpdateAllHint">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="&#xE895;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" Foreground="{DynamicResource Brush.Orange}" VerticalAlignment="Center"/>
+                  <TextBlock x:Name="PurUpdateAllText" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource Brush.Orange}" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                </StackPanel>
+              </Button>
               <Ellipse x:Name="PurDevDot" Width="8" Height="8" Fill="{DynamicResource Brush.Success}" Margin="0,0,8,0" VerticalAlignment="Center" Visibility="Collapsed"/>
               <TextBlock x:Name="PurDevInfo" Style="{StaticResource Muted}" FontSize="12" VerticalAlignment="Center" Margin="0,0,10,0"/>
               <Button x:Name="PurDeviceBtn" Style="{StaticResource LinkButton}" VerticalAlignment="Center" ToolTip="@Purchases.DeviceScanHint">
@@ -638,7 +654,7 @@
                   <DataGridTextColumn Header="@Col.AppId" Binding="{Binding Id}" Width="116"/>
                   <DataGridTextColumn Header="@Col.Version" Binding="{Binding Version}" Width="96"/>
                   <DataGridTextColumn Header="@Col.Source" Binding="{Binding SourceText}" Width="116"/>
-                  <DataGridTextColumn Header="@Col.Status" Binding="{Binding StatusText}" Width="170"/>
+                  <DataGridTextColumn Header="@Col.Status" Binding="{Binding StatusText}" Width="250"/>
                 </DataGrid.Columns>
               </DataGrid>
               <StackPanel x:Name="CatalogEmptyPanel" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="460">

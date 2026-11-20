@@ -1,0 +1,40 @@
+# Светофор «Популярных» (4.7): каждую ночь проверяет, в каких регионах (RU, US, KZ) есть приложения из списка,
+# и публикует Files/AppsAvailability.json в ветку data (одним коммитом, без истории — ветка main и Contributors не трогаются).
+# Программа скачивает файл при запуске: https://raw.githubusercontent.com/PiloTDredd/IPA_PILOTDREDD/data/AppsAvailability.json
+name: Apps availability
+
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apps-availability
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check App Store availability
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools\Update-AppsAvailability.ps1 -RefreshList; exit $LASTEXITCODE
+
+      - name: Publish to the data branch
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/data"
+          cp Files/AppsAvailability.json Files/AppsList.txt "$RUNNER_TEMP/data/"
+          cd "$RUNNER_TEMP/data"
+          git init -q -b data
+          git config user.name "github-actions[bot]"
+          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+          git add AppsAvailability.json AppsList.txt
+          git commit -q -m "Apps availability $(date -u +%Y-%m-%d)"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" data

@@ -174,6 +174,7 @@ Samsung Health: 1224541484
 Samsung SmartThings: 1222822904
 Shazam: 284993459
 Signal: 874139669
+Sill: 6816359860
 Snapchat: 447188370
 Snapseed: 439438619
 Spark Mail: 997102246
@@ -638,6 +639,7 @@ Zoom Workplace: 546505307
 УБРиР (РУбли): 6754563452
 Умный дом Sber (Homuz): 6472732558
 Умный дом Sber (Domly): 6754561392
+Умный дом Sber (Умный дом KZ): 6766808407
 Уралсиб (QRal): 6447505026
 Уралсиб (My Little Wishlist): 6480298953
 Уралсиб (Deliver-ЭТН): 1451514669

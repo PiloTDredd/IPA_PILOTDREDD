@@ -60,6 +60,7 @@ function Start-DreddListsUpdate {
     } -OnComplete {
         param($r, $t)
         if ($r.AppsListUpdated) { Add-DreddLog -Level Success -Area 'Lists' -Message (TF 'Log.ListsUpdated' @($r.Count)) }
+        if ($r.AvailabilityUpdated -and (Get-Command Reset-DreddAvailability -ErrorAction SilentlyContinue)) { Reset-DreddAvailability }
         elseif (-not $t.Silent) { Add-DreddLog -Level Warning -Area 'Lists' -Message (T 'Log.ListsNotUpdated') }
         if (Get-Command Update-CatalogView -ErrorAction SilentlyContinue) { Update-CatalogView }
         Update-DreddShell

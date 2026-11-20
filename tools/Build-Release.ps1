@@ -25,6 +25,9 @@ foreach ($item in 'VERSION', 'IPA_Dredd.ps1', 'Start_IPA_Dredd_Windows.bat', 'RE
     Copy-Item -LiteralPath (Join-Path $appRoot $item) -Destination $stage -Recurse
 }
 Copy-Item -LiteralPath (Join-Path $appRoot 'Files/AppsList.txt') -Destination (Join-Path $stage 'Files')
+# Снимок доступности «Популярных» (при запуске программа скачает свежий с ветки data).
+$av = Join-Path $appRoot 'Files/AppsAvailability.json'
+if (Test-Path -LiteralPath $av) { Copy-Item -LiteralPath $av -Destination (Join-Path $stage 'Files') }
 # AppsListCustom.txt не кладём: при копировании новой версии поверх старой он затёр бы «Мой список» (программа создаёт файл сама).
 
 # Запускатор с иконкой — один и тот же exe из релиза в релиз (tools/Launcher), пересборка только при изменении исходников:

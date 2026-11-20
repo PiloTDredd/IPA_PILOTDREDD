@@ -232,6 +232,14 @@ if ($SelfTest -or $Screenshot) {
         Start-DreddLibraryRefresh
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         while ($script:LibraryTask -and $sw.ElapsedMilliseconds -lt 30000) { Wait-DreddUi 200 }
+        # Светофор «Популярных» (4.7): снятое отовсюду помечено «Удалено из App Store».
+        if (Get-DreddAvailabilityCached) {
+            Set-DreddCatalogSource 'Popular'
+            $gone = $script:CatalogRows | Where-Object { (Get-DreddAvailabilityLabel (Get-DreddAvailabilityCached) $_.Id 'ru').Label -eq 'Removed' } | Select-Object -First 1
+            if (-not $gone) { $errors.Add('scenario: no removed app among popular rows') }
+            elseif ($gone.StatusText -notlike ('*' + (T 'Avail.Removed') + '*')) { $errors.Add("scenario: removed popular app '$($gone.Name)' status '$($gone.StatusText)'") }
+        } else { $errors.Add('scenario: AppsAvailability.json not loaded') }
+
         $script:UI.CatalogQuery.Text = 'Telegram'
         foreach ($theme in 'Dark', 'Light') {
             Set-DreddTheme $theme
@@ -376,6 +384,19 @@ if ($SelfTest -or $Screenshot) {
                 if ($script:UI.PurGrid.Items.Count -ne 0) { $errors.Add("scenario: 'Update on iPhone' filter shows $($script:UI.PurGrid.Items.Count) rows") }
                 Set-DreddPurchaseFilter -Tab 'All'
                 if ($script:UI.PurGrid.Items.Count -ne $script:PurchaseRows.Count) { $errors.Add('scenario: filter reset does not show all purchases') }
+                # Пакетная установка (4.7): кнопка «Обновить всё» видна ровно тогда, когда есть что обновлять; отчёт по итогам пакета.
+                $expUpd = if (@(Get-DreddUpdateAllRows).Count -gt 0) { 'Visible' } else { 'Collapsed' }
+                if ($script:UI.PurUpdateAllBtn.Visibility -ne $expUpd) { $errors.Add("scenario: Update all button is $($script:UI.PurUpdateAllBtn.Visibility), expected $expUpd") }
+                $script:LastBatchReport = $null
+                $script:Batches.Add((New-DreddBatch -Kind Update -DeviceName 'Test iPhone' -Udid 'U-SELFTEST' -Items @(
+                    [pscustomobject]@{ Id = '901'; Name = 'Batch A' }, [pscustomobject]@{ Id = '902'; Name = 'Batch B' }
+                ) -Skipped @([pscustomobject]@{ Id = '903'; Name = 'Batch C'; Reason = (T 'Batch.Skip.NeedIos') })))
+                Update-DreddBatchItem -AppId '901' -Udid 'U-SELFTEST' -State Installed
+                Update-DreddBatchItem -AppId '902' -Udid 'U-SELFTEST' -State Failed -Reason 'Test reason'
+                $expTitle = TF 'Batch.TitleUpdate' @(1, 2, 'Test iPhone')
+                if (-not (& $wait { $script:LastBatchReport } 5000)) { $errors.Add('scenario: batch report not shown') }
+                elseif ($script:LastBatchReport -ne $expTitle) { $errors.Add("scenario: batch report title '$($script:LastBatchReport)'") }
+                if ($script:Batches.Count -ne 0) { $errors.Add('scenario: finished batch not removed') }
             }
             Hide-DreddToast
             # Wi-Fi: второе устройство только по сети.

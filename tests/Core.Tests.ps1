@@ -1024,6 +1024,95 @@ Test 'Diagnostic report contains no email or Windows user name' {
     Assert-Match $rep '\[Checks\]'
 }
 
+Test 'Batch install: states, report grouped by reason, update-all selection' {
+    $b = New-DreddBatch -Kind Update -DeviceName 'iPhone' -Udid 'U1' -Items @(
+        [pscustomobject]@{ Id = '1'; Name = 'Telegram' }, [pscustomobject]@{ Id = '2'; Name = 'YouTube' },
+        [pscustomobject]@{ Id = '3'; Name = 'Maps' }, [pscustomobject]@{ Id = '4'; Name = 'Notes' },
+        [pscustomobject]@{ Id = '1'; Name = 'Telegram again' }
+    ) -Skipped @([pscustomobject]@{ Id = '9'; Name = 'Old'; Reason = 'Needs iOS 18' })
+    Assert-Equal 5 $b.Items.Count 'duplicate IDs are merged.'
+    Assert-False (Test-DreddBatchDone $b)
+    Assert-True (Set-DreddBatchItem -Batch $b -Id '1' -State Installed)
+    Assert-False (Set-DreddBatchItem -Batch $b -Id '1' -State Failed -Reason 'x') 'a finished item is not changed again (a retry is a new batch).'
+    Assert-False (Set-DreddBatchItem -Batch $b -Id '77' -State Installed) 'unknown ID.'
+    [void](Set-DreddBatchItem -Batch $b -Id '2' -State Failed -Reason 'Not purchased')
+    [void](Set-DreddBatchItem -Batch $b -Id '3' -State Failed -Reason 'Not purchased')
+    Assert-True ($null -eq $b.FinishedAt) 'not finished while items are pending.'
+    [void](Set-DreddBatchItem -Batch $b -Id '4' -State Cancelled -Reason 'ignored')
+    Assert-True (Test-DreddBatchDone $b)
+    Assert-True ($null -ne $b.FinishedAt)
+    $r = Get-DreddBatchReport $b
+    Assert-Equal 5 $r.Total; Assert-Equal 1 $r.Installed; Assert-Equal 2 $r.Failed; Assert-Equal 1 $r.Skipped; Assert-Equal 1 $r.Cancelled
+    Assert-True $r.Done
+    Assert-Equal 1 @($r.FailedGroups).Count 'same reason grouped.'
+    Assert-Equal 'Not purchased' $r.FailedGroups[0].Reason
+    Assert-Equal 'YouTube,Maps' ($r.FailedGroups[0].Names -join ',')
+    Assert-Equal 'Needs iOS 18' $r.SkippedGroups[0].Reason
+    Assert-Equal '2,3' ($r.FailedIds -join ',')
+    Assert-Equal '' ($b.Items | Where-Object Id -eq '4').Reason 'cancelled items carry no reason.'
+
+    $rows = @(
+        [pscustomobject]@{ Id = '1'; Name = 'A'; Badge = 'Outdated'; Busy = $false }, [pscustomobject]@{ Id = '2'; Name = 'B'; Badge = 'Installed'; Busy = $false },
+        [pscustomobject]@{ Id = '3'; Name = 'C'; Badge = 'Outdated'; Busy = $true }, [pscustomobject]@{ Id = '4'; Name = 'D'; Badge = 'NeedIos'; Busy = $false },
+        [pscustomobject]@{ Id = '5'; Name = 'E'; Badge = 'Outdated'; Busy = $false }
+    )
+    Assert-Equal '1,5' ((Select-DreddUpdateAll $rows | ForEach-Object { $_.Id }) -join ',')
+    Assert-Equal 0 @(Select-DreddUpdateAll @()).Count
+}
+
+Test 'Popular apps availability: lookup per region, file round trip, labels, remote update' {
+    $ctx = New-TestContext
+    $fetch = {
+        param($url)
+        $cc = if ($url -match 'country=(\w+)') { $Matches[1] } else { '' }
+        $ids = switch ($cc) { 'ru' { @('686449807') } 'us' { @('686449807', '544007664') } default { @() } }
+        $res = @($ids | ForEach-Object { '{"trackId":' + $_ + ',"trackName":"x"}' }) -join ','
+        '{"resultCount":' + @($ids).Count + ',"results":[' + $res + ']}'
+    }
+    $ids = @('686449807', '544007664', '1111111111') + @(100006..100012 | ForEach-Object { [string]$_ })
+    $r = Get-DreddAppsAvailability -Ids $ids -Countries @('ru', 'us') -Fetch $fetch
+    Assert-True $r.Ok
+    Assert-Equal 'ru,us' (@($r.Apps['686449807']) -join ',')
+    Assert-Equal 'us' (@($r.Apps['544007664']) -join ',')
+    Assert-Equal 0 @($r.Apps['1111111111']).Count
+    $path = Get-DreddAvailabilityPath $ctx
+    Save-DreddAppsAvailability -Path $path -Data $r
+    $text = [System.IO.File]::ReadAllText($path)
+    Assert-True (Test-DreddAvailabilityContent $text)
+    Assert-True ($text.IndexOf('"544007664": "us"') -lt $text.IndexOf('"686449807": "ru,us"')) 'IDs sorted numerically.'
+    $av = Read-DreddAppsAvailability -Context $ctx
+    Assert-Equal 'Available' (Get-DreddAvailabilityLabel $av '686449807' 'RU').Label
+    $o = Get-DreddAvailabilityLabel $av '544007664' 'ru'
+    Assert-Equal 'OtherRegion' $o.Label; Assert-Equal 'us' ($o.Regions -join ',')
+    Assert-Equal 'Removed' (Get-DreddAvailabilityLabel $av '1111111111').Label
+    Assert-Equal '' (Get-DreddAvailabilityLabel $av '999').Label 'unchecked ID - no label.'
+    Assert-Equal 'Available' (Get-DreddAvailabilityLabel $av '544007664' 'us').Label
+    Assert-Equal '' (Get-DreddAvailabilityLabel $av '544007664' 'de').Label 'account region not checked - no guess.'
+    Assert-Equal 'Removed' (Get-DreddAvailabilityLabel $av '1111111111' 'de').Label 'removed everywhere is still removed.'
+    Assert-Equal '' (Get-DreddAvailabilityLabel $null '1').Label
+    Assert-False (Test-DreddAvailabilityContent '<html>rate limited</html>')
+    Assert-False (Test-DreddAvailabilityContent '{"Countries":["ru"],"Apps":{"1":""}}') 'too few apps.'
+
+    # Загрузка списков: доступность берётся из AvailabilityUrl; битый ответ не затирает файл.
+    $ctx.Settings['RemoteListBaseUrl'] = 'https://example.com/lists'
+    $ctx.Settings['AvailabilityUrl'] = 'https://example.com/av.json'
+    $st = @{ Body = $text.Replace('"1111111111": ""', '"1111111111": "ru"') }
+    $remote = {
+        param($url)
+        if ($url -like '*AppsList.txt') { (@(1..12 | ForEach-Object { "App$($_): $(100000 + $_)" }) -join "`n") }
+        elseif ($url -like '*Warning.txt') { '' }
+        else { $st.Body }
+    }
+    $u = Update-DreddRemoteLists -Context $ctx -Fetch $remote
+    Assert-True $u.AvailabilityUpdated
+    Assert-Equal 'Available' (Get-DreddAvailabilityLabel (Read-DreddAppsAvailability -Context $ctx) '1111111111').Label
+    $st.Body = '<html>oops</html>'
+    $u = Update-DreddRemoteLists -Context $ctx -Fetch $remote
+    Assert-False $u.AvailabilityUpdated
+    Assert-True (@($u.Errors | Where-Object { $_ -match 'AppsAvailability' }).Count -eq 1)
+    Assert-Equal 'Available' (Get-DreddAvailabilityLabel (Read-DreddAppsAvailability -Context $ctx) '1111111111').Label 'old file kept.'
+}
+
 Test 'Localization: RU and EN have the same keys; every key used in XAML and GUI code exists' {
     $ru = Get-DreddStrings -Language RU
     $en = Get-DreddStrings -Language EN

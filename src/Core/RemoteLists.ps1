@@ -80,13 +80,14 @@ function Invoke-DreddWebTextOnce {
 }
 
 function Update-DreddRemoteLists {
-    # Возвращает: AppsListUpdated, WarningUpdated, Count, Errors[].
-    param([Parameter(Mandatory)]$Context, $Reporter)
+    # Возвращает: AppsListUpdated, WarningUpdated, AvailabilityUpdated, Count, Errors[].
+    param([Parameter(Mandatory)]$Context, $Reporter, [scriptblock]$Fetch)
+    if (-not $Fetch) { $Fetch = { param($url) Invoke-DreddWebText -Url $url } }
     $base = ([string]$Context.Settings['RemoteListBaseUrl']).TrimEnd('/')
-    $res = [ordered]@{ AppsListUpdated = $false; WarningUpdated = $false; Count = 0; Errors = @() }
+    $res = [ordered]@{ AppsListUpdated = $false; WarningUpdated = $false; AvailabilityUpdated = $false; Count = 0; Errors = @() }
     if (-not $base -or $base -notmatch '^https://') { $res.Errors += 'RemoteListBaseUrl must start with https://'; return [pscustomobject]$res }
     try {
-        $txt = Invoke-DreddWebText -Url "$base/AppsList.txt"
+        $txt = & $Fetch "$base/AppsList.txt"
         if (Test-DreddAppsListContent $txt) {
             Write-DreddTextFile -Path $Context.AppsListPath -Content $txt
             $res.AppsListUpdated = $true
@@ -94,12 +95,23 @@ function Update-DreddRemoteLists {
         } else { $res.Errors += 'AppsList.txt: invalid content' }
     } catch { $res.Errors += ('AppsList.txt: ' + $_.Exception.Message) }
     try {
-        $w = Invoke-DreddWebText -Url "$base/Warning.txt"
+        $w = & $Fetch "$base/Warning.txt"
         if ($w -notmatch '(?i)<html|<!doctype') {
             Write-DreddTextFile -Path $Context.WarningPath -Content $w
             $res.WarningUpdated = $true
         }
     } catch { $res.Errors += ('Warning.txt: ' + $_.Exception.Message) }
+    # Доступность по регионам — свой источник (ночная проверка IPA PILOTDREDD), не зависит от списка kda2495.
+    $avUrl = [string]$Context.Settings['AvailabilityUrl']
+    if ($avUrl -match '^https://') {
+        try {
+            $av = & $Fetch $avUrl
+            if (Test-DreddAvailabilityContent $av) {
+                Write-DreddTextFile -Path (Get-DreddAvailabilityPath $Context) -Content $av
+                $res.AvailabilityUpdated = $true
+            } else { $res.Errors += 'AppsAvailability.json: invalid content' }
+        } catch { $res.Errors += ('AppsAvailability.json: ' + (Get-DreddWebErrorText $_.Exception)) }
+    }
     foreach ($e in $res.Errors) { Write-DreddReport -Reporter $Reporter -Type log -Level Warning -Area 'Lists' -Message $e }
     return [pscustomobject]$res
 }

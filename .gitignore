@@ -18,6 +18,7 @@
 !/Files/
 /Files/*
 !/Files/AppsList.txt
+!/Files/AppsAvailability.json
 
 # Внутри разрешённых папок — тоже никаких личных и собранных файлов:
 *.ipa

@@ -107,6 +107,15 @@ function Set-DreddQueueStatus {
     $Item.StatusText = T "Status.$Status"
     $Item.ShowProgress = ($Status -eq 'Running')
     if (Get-Command Update-DreddPurchaseFromQueue -ErrorAction SilentlyContinue) { Update-DreddPurchaseFromQueue $Item }
+    # Пакетная установка (4.7): итог загрузки+установки — в отчёт пакета. Причина ошибки ($Item.Error) задаётся до смены статуса.
+    if ($Item.InstallUdid -and (Get-Command Update-DreddBatchItem -ErrorAction SilentlyContinue)) {
+        switch ($Status) {
+            'Installed' { Update-DreddBatchItem -AppId $Item.AppId -Udid $Item.InstallUdid -State Installed }
+            'InstallError' { Update-DreddBatchItem -AppId $Item.AppId -Udid $Item.InstallUdid -State Failed -Reason $Item.Error }
+            'Error' { Update-DreddBatchItem -AppId $Item.AppId -Udid $Item.InstallUdid -State Failed -Reason $Item.Error }
+            'Cancelled' { Update-DreddBatchItem -AppId $Item.AppId -Udid $Item.InstallUdid -State Cancelled }
+        }
+    }
     Save-DreddQueueState
     Update-DreddHome 'Download'
 }
@@ -236,8 +245,8 @@ function Start-DreddNextDownload {
                 Add-DreddHistoryEntry -Context $script:Ctx -Kind Download -AppId $q.AppId -Name $q.AppName -Result Cancelled
             } else {
                 $q.ErrorKey = $r.Error.Key; $q.ErrorMessage = $r.Error.Message
-                Set-DreddQueueStatus $q 'Error'
                 $q.Error = Get-DreddErrorText $r.Error.Key $r.Error.Message
+                Set-DreddQueueStatus $q 'Error'
                 $q.StatusText = T "Status.Error"
                 Add-DreddHistoryEntry -Context $script:Ctx -Kind Download -AppId $q.AppId -Name $q.AppName -Result Error -Message $r.Error.Message
                 Add-DreddLog -Level Error -Area 'Download' -Message ("{0}: {1}" -f $q.AppName, $q.Error)
@@ -251,7 +260,7 @@ function Start-DreddNextDownload {
         param($m)
         $q = $script:ActiveDownload
         $script:ActiveDownload = $null
-        if ($q) { Set-DreddQueueStatus $q 'Error'; $q.Error = $m }
+        if ($q) { $q.Error = $m; Set-DreddQueueStatus $q 'Error' }
         Add-DreddLog -Level Error -Area 'Download' -Message $m
         Start-DreddNextDownload
         Update-DownloadsTexts

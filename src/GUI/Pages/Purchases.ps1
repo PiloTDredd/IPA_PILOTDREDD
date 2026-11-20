@@ -68,6 +68,7 @@ function Initialize-PurchasesPage {
     $u.PurSearch.Add_TextChanged({ $script:PurSearchTimer.Stop(); $script:PurSearchTimer.Start() })
 
     $u.PurScanBtn.Add_Click({ Safe { Start-DreddPurchaseScan } })
+    $u.PurUpdateAllBtn.Add_Click({ Safe { Invoke-DreddUpdateAll } })
     $u.PurDeviceBtn.Add_Click({ Safe { Start-DreddDeviceAppsScan } })
     # Колонка «На iPhone» видна, когда есть с чем сравнивать (DataGridColumn не ищется по x:Name — берём по SortMemberPath).
     $script:PurDeviceColumn = $u.PurGrid.Columns | Where-Object { $_.SortMemberPath -eq 'DeviceOrder' } | Select-Object -First 1
@@ -392,6 +393,7 @@ function Update-PurchaseCounts {
     $script:UI.PurFilterText.Text = if ($script:PurchaseExtra) { T "Purchases.Flt.$($script:PurchaseExtra)" } else { T 'Purchases.Filter' }
     $script:UI.PurFilterBtn.SetResourceReference([System.Windows.Controls.Control]::BorderBrushProperty, $(if ($script:PurchaseExtra) { 'Brush.Accent' } else { 'Brush.Border' }))
     $script:PurchaseFailedCount = $c.Failed
+    Update-DreddUpdateAllButtons
     Update-DreddHome 'Tiles'
 }
 
@@ -564,10 +566,17 @@ function Invoke-DreddPurchaseDownload {
 function Invoke-DreddPurchaseInstall {
     # Скачанное — сразу на iPhone; остальное (и «есть обновление») — скачать, затем установить. Без --purchase.
     # -SkipUnfit (массовая установка): пропустить то, что уже стоит на iPhone или не подходит к его iOS, и сказать об этом.
-    param([object[]]$Rows, [switch]$SkipUnfit)
+    # -Kind: Install / Update (отчёт пакета «Обновлено …»). Отсеянное -SkipUnfit попадает в отчёт пакета как «пропущено».
+    param([object[]]$Rows, [switch]$SkipUnfit, [string]$Kind = 'Install')
+    $skippedRows = @()
     if ($SkipUnfit) {
         $all = @($Rows | Where-Object { $_ })
         $Rows = @(Get-DreddPurchaseInstallable $all)
+        $fitIds = @{}; foreach ($x in $Rows) { $fitIds[$x.Id] = $true }
+        $skippedRows = @($all | Where-Object { -not $fitIds.ContainsKey($_.Id) } | ForEach-Object {
+            $why = if ($_.Status -in 'Queued', 'Running') { T 'Batch.Skip.Busy' } elseif ($script:PurchaseBadge[$_.Id] -eq 'NeedIos') { T 'Batch.Skip.NeedIos' } else { T 'Batch.Skip.Installed' }
+            [pscustomobject]@{ Id = $_.Id; Name = $_.Name; Reason = $why }
+        })
         $skipped = $all.Count - $Rows.Count
         if ($skipped -gt 0) { Add-DreddLog -Level Warning -Area 'Install' -Message (TF 'Purchases.Skipped' @($skipped)) }
         if ($Rows.Count -eq 0) {
@@ -575,11 +584,44 @@ function Invoke-DreddPurchaseInstall {
             return
         }
     }
-    $apps = @($Rows | Where-Object { $_ } | ForEach-Object {
+    # Всё выбранное — старые версии на iPhone: это обновление (заголовок отчёта «Обновлено …»).
+    $live = @($Rows | Where-Object { $_ })
+    if ($Kind -eq 'Install' -and $live.Count -gt 0 -and @($live | Where-Object { $script:PurchaseBadge[$_.Id] -ne 'Outdated' }).Count -eq 0) { $Kind = 'Update' }
+    $apps = @($live | ForEach-Object {
         [pscustomobject]@{ Id = $_.Id; Name = $_.Name; Local = $(if ($script:PurchaseBase[$_.Id] -eq 'Downloaded') { $_.LocalPath } else { $null }) }
     })
-    Invoke-DreddInstallApps -Apps $apps -Purchase $false
+    Invoke-DreddInstallApps -Apps $apps -Purchase $false -Kind $Kind -Skipped $skippedRows
     foreach ($r in @($Rows)) { if ($r) { Update-DreddPurchaseRow $r } }
+}
+
+# ---------------- «Обновить всё на iPhone» (4.7) ----------------
+
+function Get-DreddUpdateAllRows {
+    # Строки «Покупок», где на iPhone старая версия и загрузка не идёт (правило — Select-DreddUpdateAll в ядре).
+    if (-not $script:DeviceCompare) { return @() }
+    $pick = @(Select-DreddUpdateAll @($script:PurchaseRows | ForEach-Object {
+        [pscustomobject]@{ Id = $_.Id; Name = $_.Name; Badge = $script:PurchaseBadge[$_.Id]; Busy = ($_.Status -in 'Queued', 'Running') } }))
+    $ids = @{}; foreach ($p in $pick) { $ids[$p.Id] = $true }
+    return @($script:PurchaseRows | Where-Object { $ids.ContainsKey($_.Id) })
+}
+
+function Update-DreddUpdateAllButtons {
+    $u = $script:UI
+    if (-not $u -or -not $u.PurUpdateAllBtn) { return }
+    $n = @(Get-DreddUpdateAllRows).Count
+    $text = TF 'Purchases.UpdateAllN' @($n)
+    $vis = if ($n -gt 0) { 'Visible' } else { 'Collapsed' }
+    $ok = [bool]$script:Ctx.Binaries.IdeviceInstaller -and [bool]$script:Ctx.Binaries.Ipatool
+    foreach ($pair in @(@('PurUpdateAllBtn', 'PurUpdateAllText'), @('HomeUpdateAllBtn', 'HomeUpdateAllText'))) {
+        $u[$pair[1]].Text = $text; $u[$pair[0]].Visibility = $vis; $u[$pair[0]].IsEnabled = $ok
+    }
+}
+
+function Invoke-DreddUpdateAll {
+    $rows = @(Get-DreddUpdateAllRows)
+    if ($rows.Count -eq 0) { Show-DreddToast -Kind Info -Title (T 'Home.Tile.UpdateNone') -AutoHideMs 4000; return }
+    Invoke-DreddPurchaseInstall $rows -Kind Update
+    Update-DreddUpdateAllButtons
 }
 
 function Invoke-DreddPurchaseVersions {

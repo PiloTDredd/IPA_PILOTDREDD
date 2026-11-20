@@ -194,6 +194,89 @@ function Start-DreddInstall {
 $script:AutoInstallQueue = New-Object System.Collections.Generic.List[object]
 $script:PendingInstall = $null
 
+# ---------------- Пакетная установка с отчётом (4.7, ядро — src/Core/Batch.ps1) ----------------
+# Пакет создаёт Invoke-DreddInstallApps; итоги приходят из очереди загрузок (Set-DreddQueueStatus) и очереди установок.
+# Когда в пакете не осталось ожидающих — отчёт «установлено / не встало и почему» (показывается после текущего обработчика).
+
+$script:Batches = New-Object System.Collections.Generic.List[object]
+$script:BatchReports = New-Object System.Collections.Generic.Queue[object]
+$script:BatchReportTimer = $null
+
+function Update-DreddBatchItem {
+    param([string]$AppId, [string]$Udid, [string]$State, [string]$Reason)
+    if (-not $AppId) { return }
+    foreach ($b in $script:Batches.ToArray()) {
+        if ($Udid -and $b.Udid -and $b.Udid -ne $Udid) { continue }
+        if (-not (Set-DreddBatchItem -Batch $b -Id $AppId -State $State -Reason $Reason)) { continue }
+        if (Test-DreddBatchDone $b) {
+            [void]$script:Batches.Remove($b)
+            $script:BatchReports.Enqueue($b)
+            if (-not $script:BatchReportTimer) {
+                $script:BatchReportTimer = New-Object System.Windows.Threading.DispatcherTimer
+                $script:BatchReportTimer.Interval = [TimeSpan]::FromMilliseconds(400)
+                $script:BatchReportTimer.Add_Tick({ Safe {
+                    $script:BatchReportTimer.Stop()
+                    while ($script:BatchReports.Count -gt 0) { Show-DreddBatchReport $script:BatchReports.Dequeue() }
+                } })
+            }
+            $script:BatchReportTimer.Stop(); $script:BatchReportTimer.Start()
+        }
+        return
+    }
+}
+
+function Format-DreddBatchReport {
+    # Текст отчёта: строка итогов, затем «Не встало» и «Пропущено» по причинам (до 6 названий в группе).
+    param($Report)
+    $r = $Report
+    $parts = @(TF 'Batch.Installed' @($r.Installed))
+    if ($r.Failed) { $parts += TF 'Batch.FailedN' @($r.Failed) }
+    if ($r.Skipped) { $parts += TF 'Batch.SkippedN' @($r.Skipped) }
+    if ($r.Cancelled) { $parts += TF 'Batch.CancelledN' @($r.Cancelled) }
+    $min = [int][Math]::Round($r.Duration.TotalMinutes)
+    $parts += $(if ($min -ge 1) { TF 'Batch.Minutes' @($min) } else { T 'Batch.UnderMinute' })
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add(($parts -join ' · '))
+    foreach ($sec in @(@('Batch.FailedHead', $r.FailedGroups), @('Batch.SkippedHead', $r.SkippedGroups))) {
+        $groups = @($sec[1] | Where-Object { $_ })
+        if ($groups.Count -eq 0) { continue }
+        $lines.Add(''); $lines.Add((T $sec[0]))
+        foreach ($g in $groups) {
+            $names = @($g.Names | Select-Object -First 6) -join ', '
+            if ($g.Names.Count -gt 6) { $names += ' ' + (TF 'Purchases.AndMore' @($g.Names.Count - 6)) }
+            $reason = if ($g.Reason) { $g.Reason } else { T 'Batch.NoReason' }
+            $lines.Add(('• {0} — {1}' -f $reason, $names))
+        }
+    }
+    return ($lines -join "`n")
+}
+
+function Show-DreddBatchReport {
+    param($Batch)
+    $r = Get-DreddBatchReport $Batch
+    $verb = if ($Batch.Kind -eq 'Update') { 'Batch.TitleUpdate' } else { 'Batch.TitleInstall' }
+    $title = TF $verb @($r.Installed, ($r.Total - $r.Skipped), $Batch.DeviceName)
+    $text = Format-DreddBatchReport $r
+    $script:LastBatchReport = $title
+    Add-DreddLog -Level $(if ($r.Failed) { 'Warning' } else { 'Success' }) -Area 'Install' -Message ($title + ' — ' + ($text -split "`n")[0])
+    $buttons = @(@{ Key = 'copy'; Text = (T 'Batch.Copy') })
+    if ($r.Failed) { $buttons += @{ Key = 'retry'; Text = (TF 'Batch.Retry' @($r.Failed)) } }
+    $buttons += @{ Key = 'ok'; Text = (T 'Common.OK'); Kind = 'Primary' }
+    $choice = Show-DreddDialog -Title $title -Message $text -Kind $(if ($r.Failed) { 'Warning' } else { 'Success' }) -Buttons $buttons
+    switch ($choice) {
+        'copy' { [System.Windows.Clipboard]::SetText(($title + "`n`n" + $text)) }
+        'retry' {
+            $ids = @{}; foreach ($id in $r.FailedIds) { $ids[$id] = $true }
+            $rows = @($script:PurchaseRows | Where-Object { $ids.ContainsKey($_.Id) })
+            if ($rows.Count -gt 0) { Invoke-DreddPurchaseInstall $rows -Kind $Batch.Kind }
+            else {
+                $apps = @($Batch.Items | Where-Object { $ids.ContainsKey($_.Id) } | ForEach-Object { [pscustomobject]@{ Id = $_.Id; Name = $_.Name; Local = $null } })
+                Invoke-DreddInstallApps -Apps $apps -Purchase $false -Kind $Batch.Kind
+            }
+        }
+    }
+}
+
 function Get-DreddInstallTarget {
     <#
       Устройство для установки: единственное готовое; выбранное на экране «Устройства»; иначе — выбор в диалоге.
@@ -224,18 +307,23 @@ function Invoke-DreddInstallApps {
     <#
       «Установить на iPhone» из «Покупок» и «Поиска». Apps: объекты { Id; Name; Local } — Local = путь к уже скачанному IPA
       (тогда только установка), иначе загрузка с установкой после неё. -Purchase — флаг --purchase для новых загрузок.
+      Пакет (4.7): от двух приложений (или «Обновить всё») — учёт в $script:Batches и отчёт, когда всё закончится.
+      -Kind: Install / Update; -Skipped: { Id; Name; Reason } — отсеянное заранее, попадает в отчёт как «пропущено».
     #>
-    param([object[]]$Apps, [bool]$Purchase)
+    param([object[]]$Apps, [bool]$Purchase, [string]$Kind = 'Install', [object[]]$Skipped)
     $apps = @($Apps | Where-Object { $_ -and $_.Id })
     if ($apps.Count -eq 0) { return }
-    $script:PendingInstallApps = $apps
-    $script:PendingInstallPurchase = $Purchase
-    $dev = Get-DreddInstallTarget -Retry { Invoke-DreddInstallApps $script:PendingInstallApps $script:PendingInstallPurchase }
+    $script:PendingInstallArgs = @{ Apps = $apps; Purchase = $Purchase; Kind = $Kind; Skipped = @($Skipped) }
+    $dev = Get-DreddInstallTarget -Retry { $p = $script:PendingInstallArgs; Invoke-DreddInstallApps @p }
     if (-not $dev) { return }
     $toDownload = @($apps | Where-Object { -not $_.Local })
     if ($toDownload.Count -gt 0 -and -not (Test-DreddLoggedIn)) { return }
+    $skippedList = @($Skipped | Where-Object { $_ })
+    if ($apps.Count + $skippedList.Count -ge 2 -or $Kind -eq 'Update') {
+        $script:Batches.Add((New-DreddBatch -Kind $Kind -DeviceName $dev.Name -Udid $dev.Udid -Items $apps -Skipped $skippedList))
+    }
     foreach ($a in $apps) {
-        if ($a.Local) { Add-DreddAutoInstall -Path $a.Local -Name $a.Name -Udid $dev.Udid -DeviceName $dev.Name }
+        if ($a.Local) { Add-DreddAutoInstall -Path $a.Local -Name $a.Name -Udid $dev.Udid -DeviceName $dev.Name -AppId $a.Id }
         else { Add-DreddDownloadItem -AppId $a.Id -AppName $a.Name -Purchase $Purchase -InstallUdid $dev.Udid -InstallDevice $dev.Name }
     }
     Add-DreddLog -Level Info -Area 'Install' -Message (TF 'Install.Queued' @($apps.Count, $dev.Name))
@@ -254,8 +342,12 @@ function Resume-DreddPendingInstall {
 
 function Add-DreddAutoInstall {
     # Ставит IPA в очередь установок. Блокирующие проблемы (iOS старее, подпись) — не ставим, объясняем в уведомлении.
-    param([string]$Path, [string]$Name, [string]$Udid, [string]$DeviceName, $QueueItem)
-    if (-not [System.IO.File]::Exists($Path)) { return }
+    # -AppId: App Store ID для отчёта пакета, когда ставится уже скачанный файл (без строки очереди загрузок).
+    param([string]$Path, [string]$Name, [string]$Udid, [string]$DeviceName, $QueueItem, [string]$AppId)
+    if (-not [System.IO.File]::Exists($Path)) {
+        if (-not $QueueItem) { Update-DreddBatchItem -AppId $AppId -Udid $Udid -State Failed -Reason (T 'Batch.FileMissing') }
+        return
+    }
     $meta = Get-DreddIpaMetadata -Path $Path
     $dev = $script:DeviceRows | Where-Object { $_.Udid -eq $Udid } | Select-Object -First 1
     $problem = $null
@@ -265,12 +357,13 @@ function Add-DreddAutoInstall {
         if ($sig -and $sig.Blocking) { $problem = T $sig.Key }
     }
     if ($problem) {
-        if ($QueueItem) { Set-DreddQueueStatus $QueueItem 'InstallError'; $QueueItem.Error = $problem }
+        if ($QueueItem) { $QueueItem.Error = $problem; Set-DreddQueueStatus $QueueItem 'InstallError' }
+        else { Update-DreddBatchItem -AppId $AppId -Udid $Udid -State Failed -Reason $problem }
         Show-DreddToast -Kind Warning -Title (TF 'Install.Skipped' @($Name, $DeviceName)) -Text $problem
         return
     }
     if ($QueueItem) { Set-DreddQueueStatus $QueueItem 'InstallQueued' }
-    $script:AutoInstallQueue.Add([pscustomobject]@{ Path = $Path; Name = $Name; Version = $meta.Version; Udid = $Udid; Device = $DeviceName; Item = $QueueItem })
+    $script:AutoInstallQueue.Add([pscustomobject]@{ Path = $Path; Name = $Name; Version = $meta.Version; Udid = $Udid; Device = $DeviceName; Item = $QueueItem; AppId = $AppId })
     Start-DreddNextAutoInstall
 }
 
@@ -297,11 +390,13 @@ function Start-DreddNextAutoInstall {
             if ($job.Item -and $job.Item.AppId -and (Get-Command Set-DreddDeviceAppInstalled -ErrorAction SilentlyContinue)) {
                 Set-DreddDeviceAppInstalled -AppId $job.Item.AppId -Udid $job.Udid -Version $job.Version
             }
+            if (-not $job.Item) { Update-DreddBatchItem -AppId $job.AppId -Udid $job.Udid -State Installed }
             Add-DreddLog -Level Success -Area 'Install' -Message ("✔ {0} → {1}" -f $job.Name, $job.Device)
             Show-DreddToast -Kind Success -Title (TF 'Install.Done' @($job.Name, $job.Device)) -AutoHideMs 5000 -Low
         } else {
             $txt = Get-DreddErrorText $r.ErrorKey $r.Message
-            if ($job.Item) { Set-DreddQueueStatus $job.Item 'InstallError'; $job.Item.Error = $txt }
+            if ($job.Item) { $job.Item.Error = $txt; Set-DreddQueueStatus $job.Item 'InstallError' }
+            else { Update-DreddBatchItem -AppId $job.AppId -Udid $job.Udid -State $(if ($r.ErrorKey -eq 'Err.Cancelled') { 'Cancelled' } else { 'Failed' }) -Reason $txt }
             Add-DreddLog -Level Error -Area 'Install' -Message ("✖ {0} → {1}: {2}" -f $job.Name, $job.Device, $txt)
             if ($r.ErrorKey -ne 'Err.Cancelled') { Show-DreddToast -Kind Error -Title (TF 'Install.Failed' @($job.Name, $job.Device)) -Text $txt }
         }
@@ -312,7 +407,8 @@ function Start-DreddNextAutoInstall {
         param($m)
         $script:InstallTask = $null
         $job = $script:AutoInstallJob
-        if ($job.Item) { Set-DreddQueueStatus $job.Item 'InstallError'; $job.Item.Error = $m }
+        if ($job.Item) { $job.Item.Error = $m; Set-DreddQueueStatus $job.Item 'InstallError' }
+        else { Update-DreddBatchItem -AppId $job.AppId -Udid $job.Udid -State Failed -Reason $m }
         Add-DreddLog -Level Error -Area 'Install' -Message $m
         Update-DevicesButtons
         Start-DreddNextAutoInstall

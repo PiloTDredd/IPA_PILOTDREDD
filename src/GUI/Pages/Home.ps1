@@ -16,6 +16,7 @@ function Initialize-HomePage {
     $u.HomeTileMissing.Add_Click({ Safe { Open-DreddHomeTile 'NotOnDevice' } })
     $u.HomeTileOn.Add_Click({ Safe { Open-DreddHomeTile 'OnDevice' } })
     $u.HomeTileUpdate.Add_Click({ Safe { Open-DreddHomeTile 'OnDevice' 'DeviceOutdated' } })
+    $u.HomeUpdateAllBtn.Add_Click({ Safe { Invoke-DreddUpdateAll } })
     $u.HomeDlCancelBtn.Add_Click({ Safe { $q = $script:UI.HomeDlActive.DataContext; if ($q) { Stop-DreddDownloadItem $q } } })
     $u.HomeDlQueueLink.Add_Click({ Safe { Show-DreddPage 'Downloads' } })
     $u.HomeAllDownloadsBtn.Add_Click({ Safe { Show-DreddPage 'Downloads' } })
