@@ -620,6 +620,10 @@ Test 'Tool update: ipatool-cpp is checked in its own repo, the platform archive 
     Assert-Equal 'NoChecksum' $noSum.Reason
     $noPlat = Test-DreddToolUpdate -Context $ctx -Fetch { '{"tag_name":"1.5.0","assets":[{"name":"linux_amd64_ipatool-cpp.zip","size":1,"browser_download_url":"https://e.com/a.zip","digest":"sha256:' + ('c' * 64) + '"}]}' }
     Assert-Equal 'NoAsset' $noPlat.Reason 'an archive of another platform must not be installed.'
+    # С ipatool-cpp 1.3.3 в имени архива есть версия.
+    $versioned = Test-DreddToolUpdate -Context $ctx -Fetch { '{"tag_name":"1.3.4","assets":[{"name":"linux_amd64_ipatool-cpp-1.3.4.zip","size":1,"browser_download_url":"https://e.com/l.zip","digest":"sha256:' + ('c' * 64) + '"},{"name":"' + $plat + '_ipatool-cpp-1.3.4.zip","size":1,"browser_download_url":"https://e.com/w.zip","digest":"sha256:' + ('d' * 64) + '"}]}' }.GetNewClosure()
+    Assert-True $versioned.CanInstall "versioned archive name not recognised: $($versioned.Reason)"
+    Assert-Equal "$($plat)_ipatool-cpp-1.3.4.zip" $versioned.Release.Asset.Name
     $off = Test-DreddToolUpdate -Context $ctx -Fetch { throw 'The remote name could not be resolved' }
     Assert-False $off.Ok
 }
@@ -690,6 +694,18 @@ Test 'Tool update: checksum is enforced, files replaced with a backup' {
     Assert-Equal '9.9.9' (Get-DreddToolVersion $ctx)
     Assert-Equal '4.3.3' (Get-DreddBundleVersion $ctx) 'ipatool update must not change the bundle version.'
     Assert-Equal 0 @([System.IO.Directory]::GetDirectories($ctx.TempRoot, 'update_*')).Count 'update temp folder not cleaned.'
+    # С 1.3.4 файл внутри с версией (ipatool-cpp-1.3.4-windows-amd64.exe): заменяет прежний, а не ложится рядом.
+    $dir2 = Join-Path $TestRoot ('rel_' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+    [void][System.IO.Directory]::CreateDirectory((Join-Path $dir2 'src'))
+    [System.IO.File]::WriteAllText((Join-Path $dir2 'src\ipatool-cpp-9.9.10-windows-amd64.cmd'), "@echo ipatool-cpp versioned build`r`n")
+    $zip2 = Join-Path $dir2 'windows_amd64_ipatool-cpp-9.9.10.zip'
+    [System.IO.Compression.ZipFile]::CreateFromDirectory((Join-Path $dir2 'src'), $zip2)
+    $release2 = [pscustomobject]@{ Tag = '9.9.10'; Version = '9.9.10'; Url = ''; Kind = 'Tool'; Asset = [pscustomobject]@{ Name = 'b.zip'; Url = 'https://example.com/b.zip'; Size = 1; Sha256 = (Get-FileHash $zip2 -Algorithm SHA256).Hash.ToLowerInvariant() } }
+    $ok2 = Install-DreddToolUpdate -Context $ctx -Release $release2 -ZipPath $zip2
+    Assert-True $ok2.Ok "versioned install failed: $($ok2.ErrorKey) $($ok2.Message)"
+    Assert-Match ([System.IO.File]::ReadAllText($old)) 'versioned build' 'versioned ipatool must replace the existing file.'
+    Assert-Equal 1 @([System.IO.Directory]::GetFiles($plat, 'ipatool*')).Count 'versioned ipatool left a second copy next to the old one.'
+    Assert-Equal '9.9.10' (Get-DreddToolVersion $ctx)
 }
 
 Test 'First run without binaries: components installed from the release archive' {

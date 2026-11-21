@@ -41,10 +41,18 @@ function Get-DreddBundleVersion {
 
 function Get-DreddToolAssetPattern {
     # Архив ipatool-cpp для платформы: windows_amd64_ipatool-cpp.zip, macOS_arm64_ipatool-cpp.zip…
+    # С 1.3.3 в имени есть версия: windows_amd64_ipatool-cpp-1.3.4.zip (в 1.3.3 лежали оба варианта).
     param([Parameter(Mandatory)]$Context)
     $plat = [string]$Context.Platform.BinaryFolder
     if (-not $plat) { return '^$' }
-    return '^' + [regex]::Escape($plat) + '_ipatool-cpp\.zip$'
+    return '^' + [regex]::Escape($plat) + '_ipatool-cpp(-\d+(\.\d+)+)?\.zip$'
+}
+
+function Get-DreddToolFileName {
+    # Имя ipatool в MainApp без версии: ipatool-cpp-1.3.4-windows-amd64.exe → ipatool-cpp-windows-amd64.exe.
+    # Так новый файл заменяет старый, а не ложится рядом (поиск ipatool*.exe взял бы любой из двух).
+    param([Parameter(Mandatory)][string]$Name)
+    return ($Name -replace '^ipatool-cpp-\d+(\.\d+)+-', 'ipatool-cpp-')
 }
 
 function Get-DreddLatestRelease {
@@ -236,7 +244,7 @@ function Install-DreddToolUpdate {
                     if ($plat -eq $platDir) { throw "MainApp\$plat not found" }
                     continue
                 }
-                $name = [System.IO.Path]::GetFileName($new[$plat])
+                $name = Get-DreddToolFileName ([System.IO.Path]::GetFileName($new[$plat]))
                 $dest = Join-Path $destDir $name
                 if ([System.IO.File]::Exists($dest)) {
                     $bdir = Join-Path $backupRoot $plat
