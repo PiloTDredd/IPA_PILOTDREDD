@@ -72,7 +72,7 @@ Export-ModuleMember -Function @(
     # Remote
     'Update-DreddRemoteLists', 'Invoke-DreddWebText', 'Test-DreddTransientWebError', 'Get-DreddWebErrorText', 'Get-DreddLatestRelease', 'Test-DreddAppsListContent',
     # Updates
-    'Get-DreddToolVersion', 'Get-DreddBundleVersion', 'Test-DreddToolUpdate', 'Install-DreddToolUpdate', 'Test-DreddNeedsSetup', 'Test-DreddAppUpdate',
+    'Get-DreddToolVersion', 'Get-DreddBundleVersion', 'Test-DreddToolUpdate', 'Install-DreddToolUpdate', 'Get-DreddToolFileName', 'Test-DreddNeedsSetup', 'Test-DreddAppUpdate',
     # Localization
     'Get-DreddStrings', 'Get-DreddLanguages',
     # Batch install (4.7)

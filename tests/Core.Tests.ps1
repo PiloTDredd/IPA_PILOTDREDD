@@ -813,7 +813,19 @@ Test 'ipatool update over a bundle install: one canonical file remains and the n
     Assert-Equal '9.9.20' (Get-DreddToolVersion $ctx)
 }
 
-Test 'ipatool update that cannot replace the file rolls back every moved file' {
+function New-FakeToolUpdate {
+    # Архив релиза ipatool-cpp с одним .cmd внутри и описание релиза для Install-DreddToolUpdate.
+    param([string]$Version, [string]$Text)
+    $dir = Join-Path $TestRoot ('rel_' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+    [void][System.IO.Directory]::CreateDirectory((Join-Path $dir 'src'))
+    [System.IO.File]::WriteAllText((Join-Path $dir "src\ipatool-cpp-$Version-windows-amd64.cmd"), "@echo $Text`r`n")
+    $zip = Join-Path $dir "windows_amd64_ipatool-cpp-$Version.zip"
+    [System.IO.Compression.ZipFile]::CreateFromDirectory((Join-Path $dir 'src'), $zip)
+    $release = [pscustomobject]@{ Tag = $Version; Version = $Version; Url = ''; Kind = 'Tool'; Asset = [pscustomobject]@{ Name = 'w.zip'; Url = 'https://example.com/w.zip'; Size = 1; Sha256 = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant() } }
+    return [pscustomobject]@{ Zip = $zip; Release = $release }
+}
+
+Test 'ipatool update that cannot replace the file leaves everything as it was' {
     $ctx = New-TestContext
     $ctx.Binaries.RootSource = 'app'
     $plat = Join-Path $ctx.AppRoot 'MainApp\windows_amd64'
@@ -822,24 +834,169 @@ Test 'ipatool update that cannot replace the file rolls back every moved file' {
     $canonical = Join-Path $plat 'ipatool-cpp-windows-amd64.cmd'
     [System.IO.File]::WriteAllText($versioned, "@echo ipatool old bundle`r`n")
     [System.IO.File]::WriteAllText($canonical, "@echo ipatool old canonical`r`n")
-    $dir = Join-Path $TestRoot ('rel_' + [guid]::NewGuid().ToString('N').Substring(0, 6))
-    [void][System.IO.Directory]::CreateDirectory((Join-Path $dir 'src'))
-    [System.IO.File]::WriteAllText((Join-Path $dir 'src\ipatool-cpp-9.9.30-windows-amd64.cmd'), "@echo ipatool-cpp new build`r`n")
-    $zip = Join-Path $dir 'windows_amd64_ipatool-cpp-9.9.30.zip'
-    [System.IO.Compression.ZipFile]::CreateFromDirectory((Join-Path $dir 'src'), $zip)
-    $release = [pscustomobject]@{ Tag = '9.9.30'; Version = '9.9.30'; Url = ''; Kind = 'Tool'; Asset = [pscustomobject]@{ Name = 'w.zip'; Url = 'https://example.com/w.zip'; Size = 1; Sha256 = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant() } }
-    # Файл можно прочитать, но нельзя удалить (как запущенный ipatool): замена сорвётся посреди переноса.
+    $u = New-FakeToolUpdate -Version '9.9.30' -Text 'ipatool-cpp new build'
+    # Файл можно прочитать, но нельзя удалить или переименовать: атомарная подмена не пройдёт.
     $lock = [System.IO.File]::Open($canonical, 'Open', 'Read', 'Read')
-    try { $r = Install-DreddToolUpdate -Context $ctx -Release $release -ZipPath $zip } finally { $lock.Dispose() }
+    try { $r = Install-DreddToolUpdate -Context $ctx -Release $u.Release -ZipPath $u.Zip } finally { $lock.Dispose() }
     Assert-False $r.Ok 'update must fail when the file cannot be replaced.'
     Assert-Equal 'Err.UpdateInstall' $r.ErrorKey
     # Текст ошибки .NET зависит от языка Windows: английский или русский.
     Assert-Match $r.Message '(used by another process|используется другим процессом)' "the failure must come from the locked file, got: $($r.Message)"
-    Assert-True ([System.IO.File]::Exists((Join-Path $ctx.AppRoot 'MainApp_previous\windows_amd64\ipatool-cpp-1.3.4-windows-amd64.cmd'))) 'the versioned file must have been moved before the failure (rollback really ran).'
-    Assert-Match ([System.IO.File]::ReadAllText($versioned)) 'old bundle' 'the moved file was not restored.'
+    Assert-Match ([System.IO.File]::ReadAllText($versioned)) 'old bundle' 'the versioned file was changed despite the failure.'
     Assert-Match ([System.IO.File]::ReadAllText($canonical)) 'old canonical' 'the canonical file was changed despite the failure.'
     Assert-Equal 2 @([System.IO.Directory]::GetFiles($plat, 'ipatool*')).Count
+    Assert-False ([System.IO.File]::Exists((Join-Path $plat '~ipatool.new'))) 'the staging copy must be removed on failure.'
     Assert-Equal $null (Get-DreddToolVersion $ctx) 'the version file must not change on failure.'
+}
+
+Test 'ipatool survives the process being killed at any moment of the replacement' {
+    $ctx = New-TestContext
+    $plat = Join-Path $ctx.AppRoot 'MainApp\windows_amd64'
+    $bak = Join-Path $ctx.AppRoot 'MainApp_previous\windows_amd64'
+    $build = Join-Path $TestRoot ('kill_' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+    [void][System.IO.Directory]::CreateDirectory($build)
+    $oldExe = Join-Path $build 'old.exe'; $dupExe = Join-Path $build 'dup.exe'; $newExe = Join-Path $build 'ipatool-cpp-9.9.40-windows-amd64.exe'
+    New-FakeIpatoolExe -Path $oldExe -Text 'old'
+    New-FakeIpatoolExe -Path $dupExe -Text 'bundle'
+    New-FakeIpatoolExe -Path $newExe -Text 'new'
+    # Новый файл большой (256 МБ) и заполнен случайными байтами: копирование занимает сотни миллисекунд, и недописанная
+    # копия отличается от целой. Нули не годятся: Windows заранее выделяет весь размер, и обрывок из нулей совпал бы с целым.
+    $rnd = New-Object System.Random 42
+    $buf = New-Object byte[] (4MB)
+    $fs = [System.IO.File]::Open($newExe, 'Append', 'Write')
+    try { for ($k = 0; $k -lt 64; $k++) { $rnd.NextBytes($buf); $fs.Write($buf, 0, $buf.Length) } } finally { $fs.Dispose() }
+    $valid = @{}
+    foreach ($p in @($oldExe, $dupExe, $newExe)) { $valid[(Get-FileHash $p -Algorithm SHA256).Hash] = $true }
+    $goMarker = Join-Path $build 'go.txt'; $doneMarker = Join-Path $build 'done.txt'
+    $child = Join-Path $build 'child.ps1'
+    # Дочерний процесс пишет в маркеры отметки QPC (общие для всех процессов) прямо до и после замены.
+    [System.IO.File]::WriteAllText($child, @'
+param($Module, $Source, $Plat, $Bak, $Go, $Done)
+Import-Module $Module -DisableNameChecking
+& (Get-Module IPADredd.Core) {
+    param($s, $p, $b, $go, $done)
+    $j = New-Object System.Collections.Generic.List[object]
+    [System.IO.File]::WriteAllText($go, [string][System.Diagnostics.Stopwatch]::GetTimestamp())
+    [void](Install-DreddIpatoolBinary -SourcePath $s -PlatformDir $p -BackupDir $b -Journal $j)
+    [System.IO.File]::WriteAllText($done, [string][System.Diagnostics.Stopwatch]::GetTimestamp())
+} $Source $Plat $Bak $Go $Done
+'@, (New-Object System.Text.UTF8Encoding($true)))
+    $module = Join-Path $appRoot 'src/Core/IPADredd.Core.psm1'
+    $readTicks = { param($f) for ($k = 0; $k -lt 200; $k++) { try { $t = [System.IO.File]::ReadAllText($f); if ($t) { return [long]$t } } catch { }; Start-Sleep -Milliseconds 1 }; return $null }
+    $run = {
+        param([long]$KillAtTicks)   # через сколько тиков QPC после «go» убить; -1 — не убивать
+        if ([System.IO.Directory]::Exists($plat)) { [System.IO.Directory]::Delete($plat, $true) }
+        if ([System.IO.Directory]::Exists($bak)) { [System.IO.Directory]::Delete($bak, $true) }
+        [void][System.IO.Directory]::CreateDirectory($plat)
+        [System.IO.File]::Copy($oldExe, (Join-Path $plat 'ipatool-cpp-windows-amd64.exe'))
+        [System.IO.File]::Copy($dupExe, (Join-Path $plat 'ipatool-cpp-1.3.4-windows-amd64.exe'))
+        foreach ($m in @($goMarker, $doneMarker)) { if ([System.IO.File]::Exists($m)) { [System.IO.File]::Delete($m) } }
+        $p = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$child`"", "`"$module`"", "`"$newExe`"", "`"$plat`"", "`"$bak`"", "`"$goMarker`"", "`"$doneMarker`"" -WindowStyle Hidden -PassThru
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        while (-not [System.IO.File]::Exists($goMarker) -and -not $p.HasExited -and $sw.ElapsedMilliseconds -lt 60000) { }
+        $go = & $readTicks $goMarker
+        $killedInside = $false
+        if ($KillAtTicks -ge 0 -and $go) {
+            while ([System.Diagnostics.Stopwatch]::GetTimestamp() -lt ($go + $KillAtTicks) -and -not $p.HasExited) { }
+            if (-not $p.HasExited) { $p.Kill(); $killedInside = -not [System.IO.File]::Exists($doneMarker) }
+        }
+        [void]$p.WaitForExit(60000)
+        $done = if ([System.IO.File]::Exists($doneMarker)) { & $readTicks $doneMarker } else { $null }
+        return [pscustomobject]@{ Go = $go; Done = $done; KilledInside = $killedInside }
+    }
+    # Без убийства: сколько длится сама замена (по отметкам изнутри дочернего процесса).
+    $full = & $run -1
+    Assert-True ($full.Go -and $full.Done) 'the child did not report its timestamps.'
+    Assert-Equal 'new' ((Invoke-DreddProcess -FilePath (Find-DreddBinaries -AppRoot $ctx.AppRoot).Ipatool -TimeoutSec 20).Output -replace '^ipatool-cpp fake ', '').Trim() 'an uninterrupted replacement must end with the new build.'
+    $span = $full.Done - $full.Go
+    $spanMs = [int]($span * 1000 / [System.Diagnostics.Stopwatch]::Frequency)
+    # 12 убийств равномерно внутри замены (от 3% до 97% её длительности).
+    $outcomes = @{}; $inside = 0
+    for ($i = 0; $i -lt 12; $i++) {
+        $frac = 0.03 + 0.94 * $i / 11
+        $res = & $run ([long]($span * $frac))
+        if ($res.KilledInside) { $inside++ }
+        $b = Find-DreddBinaries -AppRoot $ctx.AppRoot
+        $at = '{0:P0} of {1} ms' -f $frac, $spanMs
+        Assert-True ([bool]$b.Ipatool) "killed at $($at): no ipatool left in MainApp."
+        $h = (Get-FileHash $b.Ipatool -Algorithm SHA256).Hash
+        Assert-True $valid.ContainsKey($h) "killed at $($at): $([System.IO.Path]::GetFileName($b.Ipatool)) is a partial file."
+        $out = (Invoke-DreddProcess -FilePath $b.Ipatool -TimeoutSec 20).Output
+        Assert-Match $out 'ipatool-cpp fake (old|new)' "killed at $($at): the chosen ipatool does not run correctly: $out"
+        $outcomes[$out.Trim()] = 1 + [int]$outcomes[$out.Trim()]
+    }
+    Write-Host ("    replacement took {0} ms; killed inside it: {1} of 12; after kills: {2}" -f $spanMs, $inside, (($outcomes.Keys | Sort-Object | ForEach-Object { "$_ ×$($outcomes[$_])" }) -join ', '))
+    Assert-True ($inside -ge 6) "only $inside of 12 kills landed inside the replacement: the test would prove nothing."
+}
+
+Test 'Leftover staging file and a duplicate that cannot be moved do not break the update' {
+    $ctx = New-TestContext
+    $ctx.Binaries.RootSource = 'app'
+    $plat = Join-Path $ctx.AppRoot 'MainApp\windows_amd64'
+    [void][System.IO.Directory]::CreateDirectory($plat)
+    $versioned = Join-Path $plat 'ipatool-cpp-1.3.4-windows-amd64.cmd'
+    $canonical = Join-Path $plat 'ipatool-cpp-windows-amd64.cmd'
+    [System.IO.File]::WriteAllText($versioned, "@echo ipatool old bundle`r`n")
+    [System.IO.File]::WriteAllText($canonical, "@echo ipatool old canonical`r`n")
+    # Остаток прерванной установки: недописанный файл. Выбор ipatool его не видит.
+    [System.IO.File]::WriteAllText((Join-Path $plat '~ipatool.new'), 'partial garbage')
+    Assert-Equal $null (Select-DreddIpatoolFile -Files @([System.IO.Directory]::GetFiles($plat, 'ipatool*') | Where-Object { $_ -like '*~*' }))
+    $u = New-FakeToolUpdate -Version '9.9.31' -Text 'ipatool-cpp new build'
+    $log = New-Object System.Collections.Generic.List[object]
+    $lock = [System.IO.File]::Open($versioned, 'Open', 'Read', 'Read')
+    try { $r = Install-DreddToolUpdate -Context $ctx -Release $u.Release -ZipPath $u.Zip -Reporter { param($m) $log.Add($m) }.GetNewClosure() } finally { $lock.Dispose() }
+    Assert-True $r.Ok "a duplicate that cannot be moved must not fail the update: $($r.ErrorKey) $($r.Message)"
+    Assert-Match ([System.IO.File]::ReadAllText($canonical)) 'new build' 'the canonical file was not replaced.'
+    Assert-True ([System.IO.File]::Exists($versioned)) 'the locked duplicate stays in place.'
+    Assert-True (@($log | Where-Object { $_.Level -eq 'Warning' -and $_.Message -like '*ipatool-cpp-1.3.4-windows-amd64.cmd*' }).Count -gt 0) 'the duplicate that stayed must be reported in the log.'
+    Assert-False ([System.IO.File]::Exists((Join-Path $plat '~ipatool.new'))) 'the leftover staging file must be gone.'
+    Assert-Equal '9.9.31' (Get-DreddToolVersion $ctx)
+}
+
+Test 'Older backups in MainApp_previous are kept, not overwritten' {
+    $ctx = New-TestContext
+    $ctx.Binaries.RootSource = 'app'
+    $plat = Join-Path $ctx.AppRoot 'MainApp\windows_amd64'
+    $bak = Join-Path $ctx.AppRoot 'MainApp_previous\windows_amd64'
+    foreach ($d in @($plat, $bak)) { [void][System.IO.Directory]::CreateDirectory($d) }
+    [System.IO.File]::WriteAllText((Join-Path $plat 'ipatool-cpp-windows-amd64.cmd'), "@echo ipatool current`r`n")
+    [System.IO.File]::WriteAllText((Join-Path $bak 'ipatool-cpp-windows-amd64.cmd'), "@echo ipatool older backup`r`n")
+    [System.IO.File]::WriteAllText((Join-Path $ctx.AppRoot 'MainApp\ipatool-cpp-version.txt'), '1.3.4')
+    [System.IO.File]::WriteAllText((Join-Path $ctx.AppRoot 'MainApp_previous\ipatool-cpp-version.txt'), '1.0.0')
+    $u = New-FakeToolUpdate -Version '9.9.50' -Text 'ipatool-cpp new build'
+    $r = Install-DreddToolUpdate -Context $ctx -Release $u.Release -ZipPath $u.Zip
+    Assert-True $r.Ok "update failed: $($r.ErrorKey) $($r.Message)"
+    Assert-Match ([System.IO.File]::ReadAllText((Join-Path $bak 'ipatool-cpp-windows-amd64.cmd'))) 'current' 'MainApp_previous must hold the version that was just replaced.'
+    # Маска Windows «x.cmd.*» находит и сам «x.cmd», поэтому имя проверяется регуляркой.
+    $kept = @([System.IO.Directory]::GetFiles($bak) | Where-Object { [System.IO.Path]::GetFileName($_) -match '^ipatool-cpp-windows-amd64\.cmd\.\d{8}-\d{6}(-\d+)?$' })
+    Assert-Equal 1 $kept.Count 'the older backup must be kept under a time-stamped name.'
+    Assert-Match ([System.IO.File]::ReadAllText($kept[0])) 'older backup'
+    Assert-Equal '1.3.4' (Get-Content (Join-Path $ctx.AppRoot 'MainApp_previous\ipatool-cpp-version.txt') -Raw).Trim()
+    $keptVer = @([System.IO.Directory]::GetFiles((Join-Path $ctx.AppRoot 'MainApp_previous')) | Where-Object { [System.IO.Path]::GetFileName($_) -match '^ipatool-cpp-version\.txt\.\d{8}-\d{6}(-\d+)?$' })
+    Assert-Equal 1 $keptVer.Count 'the older version file must be kept too.'
+    Assert-Equal '1.0.0' (Get-Content $keptVer[0] -Raw).Trim()
+}
+
+Test 'ipatool file choice: equal versions do not depend on the input order' {
+    $a = 'C:\x\ipatool-cpp-1.3.4-windows-amd64.exe'; $b = 'C:\x\ipatool-cpp-1.3.4-windows-amd64 (2).exe'
+    $first = Select-DreddIpatoolFile -Files @($a, $b)
+    Assert-Equal $first (Select-DreddIpatoolFile -Files @($b, $a)) 'the same files in another order gave another choice.'
+    $c1 = 'C:\x\ipatool-cpp-windows-amd64.exe'; $c2 = 'C:\y\ipatool-cpp-windows-amd64.exe'
+    Assert-Equal (Select-DreddIpatoolFile -Files @($c1, $c2)) (Select-DreddIpatoolFile -Files @($c2, $c1))
+}
+
+Test 'ipatool file choice: unrecognised versions never beat the canonical name; names are normalised' {
+    $canon = 'C:\x\ipatool-cpp-windows-amd64.exe'
+    $beta = 'C:\x\ipatool-cpp-1.3.4b-windows-amd64.exe'; $v134 = 'C:\x\ipatool-cpp-1.3.4-windows-amd64.exe'
+    Assert-Equal $canon (Select-DreddIpatoolFile -Files @($beta, $canon)) '"1.3.4b" must not be taken for the canonical name.'
+    Assert-Equal $v134 (Select-DreddIpatoolFile -Files @($beta, $v134)) 'a recognised version wins over an unrecognised one.'
+    Assert-Equal $beta (Select-DreddIpatoolFile -Files @($beta, 'C:\x\ipatool.exe')) 'an unrecognised ipatool-cpp version still wins over other names.'
+    Assert-Equal 'ipatool-cpp-windows-amd64.exe' (Get-DreddToolFileName 'ipatool-cpp-1.3.4b-windows-amd64.exe')
+    Assert-Equal 'ipatool-cpp-windows-amd64.exe' (Get-DreddToolFileName 'ipatool-cpp-1.3.5-rc1-windows-amd64.exe')
+    Assert-Equal 'ipatool-cpp-windows-amd64.exe' (Get-DreddToolFileName 'ipatool-cpp-1.3.4-windows-amd64.exe')
+    Assert-Equal 'ipatool-cpp-macOS-arm64' (Get-DreddToolFileName 'ipatool-cpp-1.3.4-macOS-arm64')
+    Assert-Equal 'ipatool-cpp-windows-amd64.exe' (Get-DreddToolFileName 'ipatool-cpp-windows-amd64.exe') 'the canonical name must stay as it is.'
+    Assert-Equal 'ipatool-cpp-9.9.9-unknown.exe' (Get-DreddToolFileName 'ipatool-cpp-9.9.9-unknown.exe') 'without a known platform the name is not touched.'
 }
 
 Test 'Install: a device that briefly disappears is retried; a missing device gives a clear error' {

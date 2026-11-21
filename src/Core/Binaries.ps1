@@ -23,24 +23,29 @@ function Find-DreddFileByPattern {
 function Select-DreddIpatoolFile {
     <#
       Какой ipatool запускать, если в папке их несколько (ADR-028). Не «первый по алфавиту»:
-        1) каноническое имя без версии (ipatool-cpp-windows-amd64.exe) — его пишут установка и обновления;
-        2) иначе файл с версией в имени (ipatool-cpp-1.3.4-windows-amd64.exe) с самой высокой версией;
-        3) иначе первый по имени (старые раскладки 4.1/4.2 с одним файлом).
+        1) каноническое имя: после «ipatool-cpp-» сразу платформа (ipatool-cpp-windows-amd64.exe) — его пишут установка и обновления;
+        2) иначе распознанная версия в имени (ipatool-cpp-1.3.4-windows-amd64.exe) — самая высокая;
+        3) иначе нераспознанная версия (ipatool-cpp-1.3.4b-…);
+        4) иначе прочие (старые раскладки 4.1/4.2 с одним файлом).
+      Внутри группы и при равных версиях — первый по имени (порядок на входе не важен).
     #>
     param([string[]]$Files)
-    $all = @($Files | Where-Object { $_ } | Sort-Object)
+    $all = @($Files | Where-Object { $_ } | Sort-Object { [System.IO.Path]::GetFileName($_).ToLowerInvariant() }, { $_ })
     if ($all.Count -le 1) { return ($all | Select-Object -First 1) }
-    $reVersioned = '^ipatool-cpp-(\d+(?:\.\d+)+)-'
-    $canonical = @($all | Where-Object { $n = [System.IO.Path]::GetFileName($_); $n -like 'ipatool-cpp-*' -and $n -notmatch $reVersioned })
+    $name = { param($f) [System.IO.Path]::GetFileName($f) }
+    $canonical = @($all | Where-Object { (& $name $_) -match '^ipatool-cpp-[A-Za-z]' })
     if ($canonical.Count -gt 0) { return $canonical[0] }
+    $reVersioned = '^ipatool-cpp-(\d+(?:\.\d+)+)-'
     $best = $null; $bestVer = $null
     foreach ($f in $all) {
-        $m = [regex]::Match([System.IO.Path]::GetFileName($f), $reVersioned)
+        $m = [regex]::Match((& $name $f), $reVersioned)
         if (-not $m.Success) { continue }
         $v = $m.Groups[1].Value
         if (-not $best -or (Compare-DreddVersion $v $bestVer) -eq 1) { $best = $f; $bestVer = $v }
     }
     if ($best) { return $best }
+    $unparsed = @($all | Where-Object { (& $name $_) -match '^ipatool-cpp-\d' })
+    if ($unparsed.Count -gt 0) { return $unparsed[0] }
     return $all[0]
 }
 
