@@ -732,6 +732,116 @@ Test 'First run without binaries: components installed from the release archive'
     Assert-Equal $null (Get-DreddToolVersion $ctx) 'after setup the ipatool-cpp version is unknown, so its update is offered next.'
 }
 
+function New-FakeIpatoolExe {
+    # Настоящий маленький exe: печатает "ipatool-cpp fake <Text>" — по выводу видно, какой файл реально запущен.
+    param([string]$Path, [string]$Text)
+    $cls = 'FakeIpatool' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $src = "public static class $cls { public static void Main() { System.Console.WriteLine(""ipatool-cpp fake $Text""); } }"
+    Add-Type -TypeDefinition $src -OutputAssembly $Path -OutputType ConsoleApplication
+}
+
+Test 'ipatool file choice: canonical name first, then the highest version, never just the first by name' {
+    $canon = 'C:\x\ipatool-cpp-windows-amd64.exe'; $v134 = 'C:\x\ipatool-cpp-1.3.4-windows-amd64.exe'; $v1310 = 'C:\x\ipatool-cpp-1.3.10-windows-amd64.exe'
+    Assert-Equal $canon (Select-DreddIpatoolFile -Files @($v134, $canon)) 'the canonical name must win over a versioned one.'
+    Assert-Equal $v134 (Select-DreddIpatoolFile -Files @($v134))
+    Assert-Equal $v1310 (Select-DreddIpatoolFile -Files @($v134, $v1310)) '1.3.10 is newer than 1.3.4.'
+    Assert-Equal 'C:\x\ipatool.exe' (Select-DreddIpatoolFile -Files @('C:\x\ipatool.exe'))
+    Assert-Equal $null (Select-DreddIpatoolFile -Files @())
+    # Папка нового пользователя 4.7.0: файл из набора 4.5.0 (с версией) и файл обновления (каноническое имя).
+    $app = Join-Path $TestRoot ('pick_' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+    $plat = Join-Path $app 'MainApp\windows_amd64'
+    [void][System.IO.Directory]::CreateDirectory($plat)
+    foreach ($n in 'ipatool-cpp-1.3.4-windows-amd64.exe', 'ipatool-cpp-windows-amd64.exe') { [System.IO.File]::WriteAllText((Join-Path $plat $n), 'x') }
+    $b = Find-DreddBinaries -AppRoot $app
+    Assert-Equal 'ipatool-cpp-windows-amd64.exe' ([System.IO.Path]::GetFileName($b.Ipatool)) 'Find-DreddBinaries picked the bundle file instead of the updated one.'
+    Assert-Match ($b.Notes -join ' ') 'several ipatool files' 'duplicates must be visible in diagnostics.'
+}
+
+Test 'First run with the 4.5.0 bundle layout: ipatool is saved under the canonical name' {
+    $ctx = New-TestContext
+    $ctx.Binaries = [pscustomobject]@{ Root = $null; RootSource = $null; Ipatool = $null; IdeviceInstaller = $null; IdeviceId = $null; IdeviceInfo = $null; MissingDlls = @(); Candidates = @(); Notes = @() }
+    $dir = Join-Path $TestRoot ('setup45_' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+    $src = Join-Path $dir 'src\IPA_Downloader_9.9.9\MainApp\windows_amd64'
+    [void][System.IO.Directory]::CreateDirectory($src)
+    # Как в IPA Downloader 4.5.0: ipatool-cpp-1.3.4-windows-amd64.exe.
+    [System.IO.File]::WriteAllText((Join-Path $src 'ipatool-cpp-9.9.9-windows-amd64.cmd'), "@echo ipatool-cpp bundle build`r`n")
+    foreach ($f in 'ideviceinstaller.exe', 'idevice_id.exe') { [System.IO.File]::WriteAllText((Join-Path $src $f), 'x') }
+    $zip = Join-Path $dir 'release.zip'
+    [System.IO.Compression.ZipFile]::CreateFromDirectory((Join-Path $dir 'src'), $zip)
+    $release = [pscustomobject]@{ Tag = '9.9.9'; Version = '9.9.9'; Url = ''; Asset = [pscustomobject]@{ Name = 'a.zip'; Url = 'https://example.com/a.zip'; Size = 1; Sha256 = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant() } }
+    $r = Install-DreddToolUpdate -Context $ctx -Release $release -ZipPath $zip
+    Assert-True $r.Ok "setup failed: $($r.ErrorKey) $($r.Message)"
+    $plat = Join-Path $ctx.AppRoot 'MainApp\windows_amd64'
+    $names = @([System.IO.Directory]::GetFiles($plat, 'ipatool*') | ForEach-Object { [System.IO.Path]::GetFileName($_) })
+    Assert-Equal 1 $names.Count "expected one ipatool, got: $($names -join ', ')"
+    Assert-Equal 'ipatool-cpp-windows-amd64.cmd' $names[0] 'setup must save ipatool under the canonical name, like updates do.'
+    foreach ($f in 'ideviceinstaller.exe', 'idevice_id.exe') { Assert-True ([System.IO.File]::Exists((Join-Path $plat $f))) "$f not installed." }
+    Assert-False ([System.IO.Directory]::Exists((Join-Path $ctx.AppRoot 'MainApp_previous'))) 'first setup must not create a backup.'
+}
+
+Test 'ipatool update over a bundle install: one canonical file remains and the new build runs after restart' {
+    $ctx = New-TestContext
+    $plat = Join-Path $ctx.AppRoot 'MainApp\windows_amd64'
+    [void][System.IO.Directory]::CreateDirectory($plat)
+    # Состояние нового пользователя 4.7.0: набор 4.5.0 положил файл с версией, обновление — каноническое имя рядом.
+    New-FakeIpatoolExe -Path (Join-Path $plat 'ipatool-cpp-1.3.4-windows-amd64.exe') -Text 'bundle 1.3.4'
+    New-FakeIpatoolExe -Path (Join-Path $plat 'ipatool-cpp-windows-amd64.exe') -Text 'update 1.3.4'
+    [System.IO.File]::WriteAllText((Join-Path $ctx.AppRoot 'MainApp\ipatool-cpp-version.txt'), '1.3.4')
+    $ctx.Binaries = Find-DreddBinaries -AppRoot $ctx.AppRoot
+    Assert-Equal 'app' $ctx.Binaries.RootSource
+    Assert-Match (Invoke-DreddProcess -FilePath $ctx.Binaries.Ipatool -TimeoutSec 20).Output 'update 1\.3\.4' 'with both files the updated ipatool must run, not the bundle one.'
+
+    $dir = Join-Path $TestRoot ('rel_' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+    $src = Join-Path $dir 'src'
+    [void][System.IO.Directory]::CreateDirectory($src)
+    New-FakeIpatoolExe -Path (Join-Path $src 'ipatool-cpp-9.9.20-windows-amd64.exe') -Text 'new 9.9.20'
+    $zip = Join-Path $dir 'windows_amd64_ipatool-cpp-9.9.20.zip'
+    [System.IO.Compression.ZipFile]::CreateFromDirectory($src, $zip)
+    $release = [pscustomobject]@{ Tag = '9.9.20'; Version = '9.9.20'; Url = ''; Kind = 'Tool'; Asset = [pscustomobject]@{ Name = 'w.zip'; Url = 'https://example.com/w.zip'; Size = 1; Sha256 = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant() } }
+    $ok = Install-DreddToolUpdate -Context $ctx -Release $release -ZipPath $zip
+    Assert-True $ok.Ok "update failed: $($ok.ErrorKey) $($ok.Message)"
+
+    $left = @([System.IO.Directory]::GetFiles($plat, 'ipatool*') | ForEach-Object { [System.IO.Path]::GetFileName($_) })
+    Assert-Equal 1 $left.Count "duplicates left after the update: $($left -join ', ')"
+    Assert-Equal 'ipatool-cpp-windows-amd64.exe' $left[0]
+    $bak = Join-Path $ctx.AppRoot 'MainApp_previous\windows_amd64'
+    foreach ($n in 'ipatool-cpp-1.3.4-windows-amd64.exe', 'ipatool-cpp-windows-amd64.exe') { Assert-True ([System.IO.File]::Exists((Join-Path $bak $n))) "$n not kept in MainApp_previous." }
+    # «Перезапуск программы»: заново найти компоненты и запустить то, что выбрано.
+    $after = Find-DreddBinaries -AppRoot $ctx.AppRoot
+    $run = Invoke-DreddProcess -FilePath $after.Ipatool -TimeoutSec 20
+    Assert-Match $run.Output 'new 9\.9\.20' "after the update a different ipatool runs: $($run.Output)"
+    Assert-Equal '9.9.20' (Get-DreddToolVersion $ctx)
+}
+
+Test 'ipatool update that cannot replace the file rolls back every moved file' {
+    $ctx = New-TestContext
+    $ctx.Binaries.RootSource = 'app'
+    $plat = Join-Path $ctx.AppRoot 'MainApp\windows_amd64'
+    [void][System.IO.Directory]::CreateDirectory($plat)
+    $versioned = Join-Path $plat 'ipatool-cpp-1.3.4-windows-amd64.cmd'
+    $canonical = Join-Path $plat 'ipatool-cpp-windows-amd64.cmd'
+    [System.IO.File]::WriteAllText($versioned, "@echo ipatool old bundle`r`n")
+    [System.IO.File]::WriteAllText($canonical, "@echo ipatool old canonical`r`n")
+    $dir = Join-Path $TestRoot ('rel_' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+    [void][System.IO.Directory]::CreateDirectory((Join-Path $dir 'src'))
+    [System.IO.File]::WriteAllText((Join-Path $dir 'src\ipatool-cpp-9.9.30-windows-amd64.cmd'), "@echo ipatool-cpp new build`r`n")
+    $zip = Join-Path $dir 'windows_amd64_ipatool-cpp-9.9.30.zip'
+    [System.IO.Compression.ZipFile]::CreateFromDirectory((Join-Path $dir 'src'), $zip)
+    $release = [pscustomobject]@{ Tag = '9.9.30'; Version = '9.9.30'; Url = ''; Kind = 'Tool'; Asset = [pscustomobject]@{ Name = 'w.zip'; Url = 'https://example.com/w.zip'; Size = 1; Sha256 = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant() } }
+    # Файл можно прочитать, но нельзя удалить (как запущенный ipatool): замена сорвётся посреди переноса.
+    $lock = [System.IO.File]::Open($canonical, 'Open', 'Read', 'Read')
+    try { $r = Install-DreddToolUpdate -Context $ctx -Release $release -ZipPath $zip } finally { $lock.Dispose() }
+    Assert-False $r.Ok 'update must fail when the file cannot be replaced.'
+    Assert-Equal 'Err.UpdateInstall' $r.ErrorKey
+    # Текст ошибки .NET зависит от языка Windows: английский или русский.
+    Assert-Match $r.Message '(used by another process|используется другим процессом)' "the failure must come from the locked file, got: $($r.Message)"
+    Assert-True ([System.IO.File]::Exists((Join-Path $ctx.AppRoot 'MainApp_previous\windows_amd64\ipatool-cpp-1.3.4-windows-amd64.cmd'))) 'the versioned file must have been moved before the failure (rollback really ran).'
+    Assert-Match ([System.IO.File]::ReadAllText($versioned)) 'old bundle' 'the moved file was not restored.'
+    Assert-Match ([System.IO.File]::ReadAllText($canonical)) 'old canonical' 'the canonical file was changed despite the failure.'
+    Assert-Equal 2 @([System.IO.Directory]::GetFiles($plat, 'ipatool*')).Count
+    Assert-Equal $null (Get-DreddToolVersion $ctx) 'the version file must not change on failure.'
+}
+
 Test 'Install: a device that briefly disappears is retried; a missing device gives a clear error' {
     $ctx = New-TestContext
     $ctx.Binaries.IdeviceId = Join-Path $fixtures 'fake-idevice_id.cmd'

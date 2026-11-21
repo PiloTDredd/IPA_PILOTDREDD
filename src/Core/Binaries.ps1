@@ -20,6 +20,30 @@ function Find-DreddFileByPattern {
     return $f
 }
 
+function Select-DreddIpatoolFile {
+    <#
+      Какой ipatool запускать, если в папке их несколько (ADR-028). Не «первый по алфавиту»:
+        1) каноническое имя без версии (ipatool-cpp-windows-amd64.exe) — его пишут установка и обновления;
+        2) иначе файл с версией в имени (ipatool-cpp-1.3.4-windows-amd64.exe) с самой высокой версией;
+        3) иначе первый по имени (старые раскладки 4.1/4.2 с одним файлом).
+    #>
+    param([string[]]$Files)
+    $all = @($Files | Where-Object { $_ } | Sort-Object)
+    if ($all.Count -le 1) { return ($all | Select-Object -First 1) }
+    $reVersioned = '^ipatool-cpp-(\d+(?:\.\d+)+)-'
+    $canonical = @($all | Where-Object { $n = [System.IO.Path]::GetFileName($_); $n -like 'ipatool-cpp-*' -and $n -notmatch $reVersioned })
+    if ($canonical.Count -gt 0) { return $canonical[0] }
+    $best = $null; $bestVer = $null
+    foreach ($f in $all) {
+        $m = [regex]::Match([System.IO.Path]::GetFileName($f), $reVersioned)
+        if (-not $m.Success) { continue }
+        $v = $m.Groups[1].Value
+        if (-not $best -or (Compare-DreddVersion $v $bestVer) -eq 1) { $best = $f; $bestVer = $v }
+    }
+    if ($best) { return $best }
+    return $all[0]
+}
+
 function Find-DreddCommand {
     param([string]$Name)
     $cmd = Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -48,12 +72,17 @@ function Find-DreddBinaries {
         $sub = Join-Path $c.Path $Platform.BinaryFolder
         if ([System.IO.Directory]::Exists($sub)) { $platformDir = $sub }
         $ipatoolPattern = if ($Platform.IsWindows) { 'ipatool*.exe' } else { 'ipatool*' }
-        $ipatool = Find-DreddFileByPattern -Folder $platformDir -Pattern $ipatoolPattern
+        $found = @()
+        if ([System.IO.Directory]::Exists($platformDir)) { $found = @([System.IO.Directory]::GetFiles($platformDir, $ipatoolPattern)) }
+        $ipatool = Select-DreddIpatoolFile -Files $found
         $checked += [pscustomobject]@{ Path = $platformDir; Source = $c.Source; Found = [bool]$ipatool }
         if ($ipatool -and -not $result.Ipatool) {
             $result.Root = $platformDir
             $result.RootSource = $c.Source
             $result.Ipatool = $ipatool
+            if ($found.Count -gt 1) {
+                $result.Notes += ('several ipatool files: {0}; using {1}' -f (($found | ForEach-Object { [System.IO.Path]::GetFileName($_) }) -join ', '), [System.IO.Path]::GetFileName($ipatool))
+            }
         }
     }
     $result.Candidates = $checked

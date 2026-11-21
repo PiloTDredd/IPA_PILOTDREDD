@@ -42,7 +42,7 @@ Export-ModuleMember -Function @(
     # Process
     'Invoke-DreddProcess', 'ConvertTo-DreddArgumentString', 'Stop-DreddProcessTree',
     # Binaries
-    'Find-DreddBinaries', 'Get-DreddBinaryCandidates',
+    'Find-DreddBinaries', 'Get-DreddBinaryCandidates', 'Select-DreddIpatoolFile',
     # ipatool
     'Invoke-DreddIpatool', 'Get-DreddPassphrase', 'New-DreddPassphrase', 'Get-DreddAuthInfo', 'Connect-DreddAppleId',
     'Start-DreddConsoleLogin', 'Complete-DreddLogin', 'Disconnect-DreddAppleId', 'Search-DreddAppStore', 'Get-DreddAppVersions',

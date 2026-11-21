@@ -55,6 +55,46 @@ function Get-DreddToolFileName {
     return ($Name -replace '^ipatool-cpp-\d+(\.\d+)+-', 'ipatool-cpp-')
 }
 
+function Install-DreddIpatoolBinary {
+    <#
+      Единственный путь сохранения ipatool в папку платформы — и при первой установке, и при обновлениях (ADR-028).
+      Все прежние ipatool* из папки переносятся в резервную копию (каждый под своим именем), новый файл кладётся
+      под каноническим именем без версии. Каждый шаг пишется в $Journal — по нему Undo-DreddIpatoolInstall всё вернёт.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$SourcePath,
+        [Parameter(Mandatory)][string]$PlatformDir,
+        [Parameter(Mandatory)][string]$BackupDir,
+        [Parameter(Mandatory)][AllowEmptyCollection()][System.Collections.Generic.List[object]]$Journal
+    )
+    $dest = Join-Path $PlatformDir (Get-DreddToolFileName ([System.IO.Path]::GetFileName($SourcePath)))
+    foreach ($f in @([System.IO.Directory]::GetFiles($PlatformDir, 'ipatool*'))) {
+        [void][System.IO.Directory]::CreateDirectory($BackupDir)
+        $backup = Join-Path $BackupDir ([System.IO.Path]::GetFileName($f))
+        [System.IO.File]::Copy($f, $backup, $true)
+        [System.IO.File]::Delete($f)
+        $Journal.Add(@{ Kind = 'Moved'; From = $f; Backup = $backup })
+    }
+    [System.IO.File]::Copy($SourcePath, $dest, $true)
+    $Journal.Add(@{ Kind = 'New'; Dest = $dest })
+    return $dest
+}
+
+function Undo-DreddIpatoolInstall {
+    # Откат по журналу в обратном порядке: новые файлы удаляются, перенесённые возвращаются из резервной копии.
+    param([System.Collections.Generic.List[object]]$Journal)
+    if (-not $Journal) { return }
+    for ($i = $Journal.Count - 1; $i -ge 0; $i--) {
+        $e = $Journal[$i]
+        try {
+            if ($e.Kind -eq 'New') { if ([System.IO.File]::Exists($e.Dest)) { [System.IO.File]::Delete($e.Dest) } }
+            elseif ($e.Kind -eq 'Moved') {
+                if (-not [System.IO.File]::Exists($e.From) -and [System.IO.File]::Exists($e.Backup)) { [System.IO.File]::Copy($e.Backup, $e.From) }
+            }
+        } catch { }
+    }
+}
+
 function Get-DreddLatestRelease {
     # Последний релиз: Tag, Version, Url, Kind, Asset { Name, Url, Size, Sha256 } (архив релиза).
     # Kind = Bundle — набор IPA Downloader (UpdateRepo); Tool — ipatool-cpp для этой платформы (ToolRepo).
@@ -227,40 +267,28 @@ function Install-DreddToolUpdate {
 
         Write-DreddReport -Reporter $Reporter -Type status -Area 'Update' -Message 'install'
         $backupRoot = Join-Path $Context.AppRoot 'MainApp_previous'
-        $replaced = New-Object System.Collections.Generic.List[object]
+        $journal = New-Object System.Collections.Generic.List[object]
         try {
             foreach ($plat in $new.Keys) {
                 $destDir = Join-Path $mainApp $plat
                 if ($setup -and $plat -eq $platDir) {
-                    # Первая установка: копируем всю папку платформы из релиза (файлы, которых ещё нет).
+                    # Первая установка: копируем папку платформы из релиза (файлы, которых ещё нет), кроме ipatool —
+                    # он идёт тем же путём, что и обновления (каноническое имя, ADR-028).
                     [void][System.IO.Directory]::CreateDirectory($destDir)
                     foreach ($f in [System.IO.Directory]::GetFiles([System.IO.Path]::GetDirectoryName($new[$plat]))) {
-                        $to = Join-Path $destDir ([System.IO.Path]::GetFileName($f))
-                        if (-not [System.IO.File]::Exists($to)) { [System.IO.File]::Copy($f, $to); $replaced.Add(@{ Dest = $to; Backup = $null; New = $true }) }
+                        $fn = [System.IO.Path]::GetFileName($f)
+                        if ($fn -like 'ipatool*') { continue }
+                        $to = Join-Path $destDir $fn
+                        if (-not [System.IO.File]::Exists($to)) { [System.IO.File]::Copy($f, $to); $journal.Add(@{ Kind = 'New'; Dest = $to }) }
                     }
-                    continue
-                }
-                if (-not [System.IO.Directory]::Exists($destDir)) {
+                } elseif (-not [System.IO.Directory]::Exists($destDir)) {
                     if ($plat -eq $platDir) { throw "MainApp\$plat not found" }
                     continue
                 }
-                $name = Get-DreddToolFileName ([System.IO.Path]::GetFileName($new[$plat]))
-                $dest = Join-Path $destDir $name
-                if ([System.IO.File]::Exists($dest)) {
-                    $bdir = Join-Path $backupRoot $plat
-                    [void][System.IO.Directory]::CreateDirectory($bdir)
-                    [System.IO.File]::Copy($dest, (Join-Path $bdir $name), $true)
-                }
-                [System.IO.File]::Copy($new[$plat], $dest, $true)
-                $replaced.Add(@{ Dest = $dest; Backup = (Join-Path (Join-Path $backupRoot $plat) $name) })
+                [void](Install-DreddIpatoolBinary -SourcePath $new[$plat] -PlatformDir $destDir -BackupDir (Join-Path $backupRoot $plat) -Journal $journal)
             }
         } catch {
-            foreach ($r in $replaced) {
-                try {
-                    if ($r.New) { if ([System.IO.File]::Exists($r.Dest)) { [System.IO.File]::Delete($r.Dest) } }
-                    elseif ($r.Backup -and [System.IO.File]::Exists($r.Backup)) { [System.IO.File]::Copy($r.Backup, $r.Dest, $true) }
-                } catch { }
-            }
+            Undo-DreddIpatoolInstall -Journal $journal
             return (& $fail 'Err.UpdateInstall' $_.Exception.Message)
         }
         $file = if ($Release.Kind -eq 'Tool') { $script:CppVersionFile } else { $script:ToolVersionFile }
